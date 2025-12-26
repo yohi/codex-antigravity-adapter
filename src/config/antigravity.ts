@@ -25,13 +25,54 @@ export const MAX_REFRESH_RETRIES = 3;
 export const REFRESH_RETRY_BASE_MS = 1000;
 
 export const ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback";
-export const ANTIGRAVITY_SCOPES = [
-  "https://www.googleapis.com/auth/cloud-platform",
+
+// This adapter is for Google-internal Antigravity (Cloud Code Assist API) only.
+// The API endpoint uses /v1internal:loadCodeAssist which is not available to external applications.
+// If this adapter were to be used externally, set IS_INTERNAL_ONLY to false.
+export const IS_INTERNAL_ONLY = true;
+
+// OAuth scopes for Antigravity API access
+// WARNING: The broad "cloud-platform" scope grants access to all Google Cloud Platform services.
+//
+// INTERNAL USE (IS_INTERNAL_ONLY=true):
+// - Uses cloud-platform scope (required for /v1internal:loadCodeAssist internal API)
+// - Includes Google-internal scopes (cclog, experimentsandconfigs)
+//
+// EXTERNAL USE (IS_INTERNAL_ONLY=false):
+// - Uses minimal specific scopes instead of cloud-platform
+// - Removes all Google-internal scopes
+// - Uses more restrictive alternatives suitable for public APIs
+//
+// You can override scopes via ANTIGRAVITY_SCOPES environment variable (comma-separated)
+const defaultScopes = [
+  // User identity scopes (required for user context)
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
-  "https://www.googleapis.com/auth/cclog",
-  "https://www.googleapis.com/auth/experimentsandconfigs",
+
+  // API access scopes - conditional based on internal/external use
+  ...(IS_INTERNAL_ONLY ? [
+    // Internal use: broad cloud-platform scope (required for /v1internal APIs)
+    // WARNING: This grants access to ALL GCP services
+    "https://www.googleapis.com/auth/cloud-platform",
+  ] : [
+    // External use: specific minimal scopes
+    // TODO: Replace with actual documented Cloud Code API scopes when available
+    // For now, using read-only cloud-platform as a more restrictive alternative
+    "https://www.googleapis.com/auth/cloud-platform.read-only",
+  ]),
+
+  // Google-internal scopes (only included when IS_INTERNAL_ONLY is true)
+  // These MUST be removed for external applications
+  ...(IS_INTERNAL_ONLY ? [
+    "https://www.googleapis.com/auth/cclog",              // Internal logging
+    "https://www.googleapis.com/auth/experimentsandconfigs", // Internal experiments
+  ] : []),
 ];
+
+// Allow scope override via environment variable for testing/flexibility
+export const ANTIGRAVITY_SCOPES = process.env.ANTIGRAVITY_SCOPES
+  ? process.env.ANTIGRAVITY_SCOPES.split(",").map(s => s.trim())
+  : defaultScopes;
 
 export const ANTIGRAVITY_ENDPOINT_DAILY =
   "https://daily-cloudcode-pa.sandbox.googleapis.com";

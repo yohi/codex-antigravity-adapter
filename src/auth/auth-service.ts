@@ -47,6 +47,7 @@ type AuthServiceOptions = {
   stateSecret?: string | Buffer;
   projectIdEnv?: () => string | undefined;
   defaultProjectId?: string;
+  requireStateSecret?: boolean; // If true, throw error when stateSecret is missing. If false, warn and generate.
 };
 
 const LOAD_ENDPOINTS = [
@@ -72,9 +73,30 @@ export class OAuthAuthService implements AuthService {
     this.sessionStore = options.sessionStore ?? new InMemoryAuthSessionStore();
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.now = options.now ?? (() => Date.now());
-    this.stateSecret = normalizeSecret(
-      options.stateSecret ?? process.env.ANTIGRAVITY_STATE_SECRET
-    );
+
+    // Check for state secret presence
+    const rawSecret = options.stateSecret ?? process.env.ANTIGRAVITY_STATE_SECRET;
+    const requireSecret = options.requireStateSecret ?? false;
+
+    if (!rawSecret || (typeof rawSecret === "string" && rawSecret.length === 0)) {
+      if (requireSecret) {
+        throw new Error(
+          "ANTIGRAVITY_STATE_SECRET is required but not provided. " +
+          "Set ANTIGRAVITY_STATE_SECRET environment variable or pass stateSecret in options."
+        );
+      } else {
+        console.warn(
+          "WARNING: No persistent ANTIGRAVITY_STATE_SECRET is set. " +
+          "A random secret will be generated, which will invalidate all existing OAuth states across restarts. " +
+          "In multi-instance deployments, each instance will have a different secret, causing state validation failures. " +
+          "Set ANTIGRAVITY_STATE_SECRET environment variable to avoid this issue."
+        );
+        this.stateSecret = randomBytes(32);
+      }
+    } else {
+      this.stateSecret = normalizeSecret(rawSecret);
+    }
+
     this.projectIdEnv = options.projectIdEnv ?? (() => process.env.ANTIGRAVITY_PROJECT_ID);
     this.defaultProjectId = options.defaultProjectId ?? ANTIGRAVITY_DEFAULT_PROJECT_ID;
   }
@@ -411,14 +433,14 @@ function tokenExchangeFailed(message: string): Result<never, AuthError> {
   };
 }
 
-function normalizeSecret(secret?: string | Buffer): Buffer {
+function normalizeSecret(secret: string | Buffer): Buffer {
   if (secret instanceof Buffer) {
     return secret;
   }
   if (typeof secret === "string" && secret.length > 0) {
     return Buffer.from(secret, "utf8");
   }
-  return randomBytes(32);
+  throw new Error("normalizeSecret: secret must be a non-empty string or Buffer");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
