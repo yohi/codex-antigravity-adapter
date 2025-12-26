@@ -5,3 +5,19 @@
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+
+# Token stores and temporary auth files
+.tmp-*/
+*.token
+*.tokens
+token-store.json
+credentials.json
+
+# Local configuration files
+config.local.*
+*.config.local.*

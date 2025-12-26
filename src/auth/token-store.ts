@@ -3,6 +3,16 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import {
+  ACCESS_TOKEN_REFRESH_MARGIN_MS,
+  ANTIGRAVITY_CLIENT_ID,
+  ANTIGRAVITY_CLIENT_SECRET,
+  GOOGLE_OAUTH_TOKEN_URL,
+  MAX_REFRESH_RETRIES,
+  REFRESH_RETRY_BASE_MS,
+  REFRESH_TOKEN_EXPIRY_MARGIN_MS,
+} from "../config/antigravity";
+
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
 export type TokenPair = {
@@ -23,6 +33,17 @@ export type TokenError = {
 type TokenStoreOptions = {
   filePath?: string;
   now?: () => number;
+  fetch?: typeof fetch;
+  sleep?: (ms: number) => Promise<void>;
+  fileExists?: (filePath: string) => Promise<boolean>;
+};
+
+type RefreshOutcome = {
+  accessToken: string;
+  expiresAt: number;
+  refreshToken?: string;
+  refreshTokenExpiresAt?: number;
+  scope?: string;
 };
 
 const DEFAULT_TOKEN_PATH = path.join(
@@ -34,10 +55,16 @@ const DEFAULT_TOKEN_PATH = path.join(
 export class FileTokenStore {
   private filePath: string;
   private now: () => number;
+  private fetcher: typeof fetch;
+  private sleep: (ms: number) => Promise<void>;
+  private fileExists: (filePath: string) => Promise<boolean>;
 
   constructor(options: TokenStoreOptions = {}) {
     this.filePath = options.filePath ?? DEFAULT_TOKEN_PATH;
     this.now = options.now ?? (() => Date.now());
+    this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+    this.sleep = options.sleep ?? defaultSleep;
+    this.fileExists = options.fileExists ?? defaultFileExists;
   }
 
   async getAccessToken(): Promise<
@@ -48,16 +75,6 @@ export class FileTokenStore {
       return loaded;
     }
     const tokens = loaded.value;
-    if (tokens.expiresAt <= this.now()) {
-      return {
-        ok: false,
-        error: {
-          code: "EXPIRED",
-          message: "Access token expired",
-          requiresReauth: true,
-        },
-      };
-    }
     if (!tokens.projectId.trim()) {
       return {
         ok: false,
@@ -65,6 +82,20 @@ export class FileTokenStore {
           code: "IO_ERROR",
           message: "Project ID is missing",
           requiresReauth: true,
+        },
+      };
+    }
+    const now = this.now();
+    if (shouldRefreshAccessToken(tokens, now)) {
+      const refreshed = await this.refreshTokens(tokens, now);
+      if (!refreshed.ok) {
+        return refreshed;
+      }
+      return {
+        ok: true,
+        value: {
+          accessToken: refreshed.value.accessToken,
+          projectId: refreshed.value.projectId,
         },
       };
     }
@@ -100,6 +131,114 @@ export class FileTokenStore {
       return { ok: true, value: undefined };
     } catch (error) {
       return toIoError("Failed to clear tokens", error);
+    }
+  }
+
+  private async refreshTokens(
+    tokens: TokenPair,
+    now: number
+  ): Promise<Result<TokenPair, TokenError>> {
+    if (!tokens.refreshToken.trim()) {
+      return refreshFailed("Refresh token is missing");
+    }
+    if (isRefreshTokenExpired(tokens, now)) {
+      return refreshFailed("Refresh token expired");
+    }
+    const exists = await this.ensureTokenFileExists();
+    if (!exists.ok) {
+      return exists;
+    }
+    const refreshed = await this.requestTokenRefresh(tokens.refreshToken, now);
+    if (!refreshed.ok) {
+      return refreshed;
+    }
+    const updated: TokenPair = {
+      ...tokens,
+      accessToken: refreshed.value.accessToken,
+      refreshToken: refreshed.value.refreshToken ?? tokens.refreshToken,
+      expiresAt: refreshed.value.expiresAt,
+      refreshTokenExpiresAt:
+        refreshed.value.refreshTokenExpiresAt ?? tokens.refreshTokenExpiresAt,
+      scope: refreshed.value.scope ?? tokens.scope,
+    };
+    const saved = await this.saveTokens(updated);
+    if (!saved.ok) {
+      return saved;
+    }
+    return { ok: true, value: updated };
+  }
+
+  private async requestTokenRefresh(
+    refreshToken: string,
+    now: number
+  ): Promise<Result<RefreshOutcome, TokenError>> {
+    for (let attempt = 1; attempt <= MAX_REFRESH_RETRIES; attempt += 1) {
+      let response: Response;
+      try {
+        response = await this.fetcher(GOOGLE_OAUTH_TOKEN_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            grant_type: "refresh_token",
+            refresh_token: refreshToken,
+            client_id: ANTIGRAVITY_CLIENT_ID,
+            client_secret: ANTIGRAVITY_CLIENT_SECRET,
+          }),
+        });
+      } catch (error) {
+        if (attempt < MAX_REFRESH_RETRIES) {
+          await this.sleep(REFRESH_RETRY_BASE_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        return refreshFailed("Failed to refresh access token", error);
+      }
+
+      if (response.ok) {
+        let payload: unknown;
+        try {
+          payload = await response.json();
+        } catch (error) {
+          return refreshFailed("Invalid refresh response", error);
+        }
+        return parseRefreshResponse(payload, now);
+      }
+
+      const errorText = await readResponseText(response);
+      const errorPayload = parseOAuthErrorPayload(errorText);
+      const details = [errorPayload.code, errorPayload.description]
+        .filter(Boolean)
+        .join(": ");
+      const message = details
+        ? `Token refresh failed (${response.status} ${response.statusText}) - ${details}`
+        : `Token refresh failed (${response.status} ${response.statusText})`;
+
+      if (isRetryableStatus(response.status) && attempt < MAX_REFRESH_RETRIES) {
+        await this.sleep(REFRESH_RETRY_BASE_MS * 2 ** (attempt - 1));
+        continue;
+      }
+
+      return refreshFailed(message, errorText);
+    }
+
+    return refreshFailed("Failed to refresh access token");
+  }
+
+  private async ensureTokenFileExists(): Promise<Result<void, TokenError>> {
+    try {
+      const exists = await this.fileExists(this.filePath);
+      if (!exists) {
+        return {
+          ok: false,
+          error: {
+            code: "NOT_FOUND",
+            message: "Token file was deleted",
+            requiresReauth: true,
+          },
+        };
+      }
+      return { ok: true, value: undefined };
+    } catch (error) {
+      return toIoError("Failed to access token file", error);
     }
   }
 
@@ -203,6 +342,131 @@ function parseTokenPair(parsed: unknown): Result<TokenPair, TokenError> {
   };
 }
 
+type OAuthErrorPayload = {
+  error?:
+    | string
+    | {
+        code?: string;
+        status?: string;
+        message?: string;
+      };
+  error_description?: string;
+};
+
+function parseRefreshResponse(
+  payload: unknown,
+  now: number
+): Result<RefreshOutcome, TokenError> {
+  if (!isRecord(payload)) {
+    return refreshFailed("Refresh response is not a JSON object");
+  }
+  const accessToken = payload.access_token;
+  const expiresIn = payload.expires_in;
+  if (
+    typeof accessToken !== "string" ||
+    typeof expiresIn !== "number" ||
+    !Number.isFinite(expiresIn)
+  ) {
+    return refreshFailed("Refresh response is missing required fields");
+  }
+  const refreshToken =
+    typeof payload.refresh_token === "string" ? payload.refresh_token : undefined;
+  const refreshTokenExpiresIn = payload.refresh_token_expires_in;
+  let refreshTokenExpiresAt: number | undefined;
+  if (refreshTokenExpiresIn !== undefined) {
+    if (
+      typeof refreshTokenExpiresIn !== "number" ||
+      !Number.isFinite(refreshTokenExpiresIn)
+    ) {
+      return refreshFailed("refresh_token_expires_in must be a number");
+    }
+    refreshTokenExpiresAt = now + refreshTokenExpiresIn * 1000;
+  }
+  const scope = typeof payload.scope === "string" ? payload.scope : undefined;
+  return {
+    ok: true,
+    value: {
+      accessToken,
+      expiresAt: now + expiresIn * 1000,
+      refreshToken,
+      refreshTokenExpiresAt,
+      scope,
+    },
+  };
+}
+
+function parseOAuthErrorPayload(text?: string): {
+  code?: string;
+  description?: string;
+} {
+  if (!text) {
+    return {};
+  }
+
+  try {
+    const payload = JSON.parse(text) as OAuthErrorPayload;
+    if (!payload || typeof payload !== "object") {
+      return { description: text };
+    }
+
+    let code: string | undefined;
+    if (typeof payload.error === "string") {
+      code = payload.error;
+    } else if (payload.error && typeof payload.error === "object") {
+      code = payload.error.status ?? payload.error.code;
+      if (!payload.error_description && payload.error.message) {
+        return { code, description: payload.error.message };
+      }
+    }
+
+    if (payload.error_description) {
+      return { code, description: payload.error_description };
+    }
+
+    if (payload.error && typeof payload.error === "object" && payload.error.message) {
+      return { code, description: payload.error.message };
+    }
+
+    return { code };
+  } catch {
+    return { description: text };
+  }
+}
+
+async function readResponseText(response: Response): Promise<string | undefined> {
+  try {
+    return await response.text();
+  } catch {
+    return undefined;
+  }
+}
+
+function shouldRefreshAccessToken(tokens: TokenPair, now: number): boolean {
+  return tokens.expiresAt <= now + ACCESS_TOKEN_REFRESH_MARGIN_MS;
+}
+
+function isRefreshTokenExpired(tokens: TokenPair, now: number): boolean {
+  if (tokens.refreshTokenExpiresAt === undefined) {
+    return false;
+  }
+  return tokens.refreshTokenExpiresAt <= now + REFRESH_TOKEN_EXPIRY_MARGIN_MS;
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status >= 500;
+}
+
+function refreshFailed(message: string, _error?: unknown): Result<never, TokenError> {
+  return {
+    ok: false,
+    error: {
+      code: "REFRESH_FAILED",
+      message,
+      requiresReauth: true,
+    },
+  };
+}
+
 function toIoError(message: string, error: unknown): Result<never, TokenError> {
   return {
     ok: false,
@@ -252,6 +516,24 @@ async function writeFileAtomic(
   }
 
   await fsyncDir(dir);
+}
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function defaultFileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.stat(filePath);
+    return true;
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 async function fsyncDir(dir: string): Promise<void> {
