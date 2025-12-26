@@ -1,5 +1,7 @@
 .codex/
 .gemini/
+.claude/
 .kiro/settings/
 AGENTS.md
 GEMINI.md
+CLAUDE.md
