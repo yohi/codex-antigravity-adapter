@@ -85,16 +85,28 @@ describe("Antigravity Config", () => {
   });
 
   it("does not include internal scopes in external mode", async () => {
-    // This test documents the expected behavior when IS_INTERNAL_ONLY is false
-    // The actual value is hardcoded in the config file
-    const { IS_INTERNAL_ONLY } = await import("../src/config/antigravity.ts");
+    // Save original environment variables
+    const originalIsInternal = process.env.ANTIGRAVITY_IS_INTERNAL_ONLY;
+    const originalScopes = process.env.ANTIGRAVITY_SCOPES;
 
-    if (!IS_INTERNAL_ONLY) {
+    try {
+      // Force external mode by setting environment variable
+      process.env.ANTIGRAVITY_IS_INTERNAL_ONLY = 'false';
       delete process.env.ANTIGRAVITY_SCOPES;
-      delete require.cache[require.resolve("../src/config/antigravity.ts")];
 
-      const { ANTIGRAVITY_SCOPES } = await import("../src/config/antigravity.ts");
+      // Clear require cache for Bun/Node.js compatibility
+      const modulePath = require.resolve("../src/config/antigravity.ts");
+      delete require.cache[modulePath];
 
+      // Re-import the module with cache-busting query parameter
+      // This ensures fresh module evaluation with new environment variables
+      const timestamp = Date.now();
+      const { ANTIGRAVITY_SCOPES, IS_INTERNAL_ONLY } = await import(`../src/config/antigravity.ts?t=${timestamp}`);
+
+      // Verify we're in external mode
+      expect(IS_INTERNAL_ONLY).toBe(false);
+
+      // Verify internal scopes are not included
       expect(ANTIGRAVITY_SCOPES).not.toContain(
         "https://www.googleapis.com/auth/cclog"
       );
@@ -104,9 +116,24 @@ describe("Antigravity Config", () => {
       expect(ANTIGRAVITY_SCOPES).not.toContain(
         "https://www.googleapis.com/auth/cloud-platform"
       );
+
+      // Verify read-only scope is included for external mode
       expect(ANTIGRAVITY_SCOPES).toContain(
         "https://www.googleapis.com/auth/cloud-platform.read-only"
       );
+    } finally {
+      // Restore original environment variables
+      if (originalIsInternal === undefined) {
+        delete process.env.ANTIGRAVITY_IS_INTERNAL_ONLY;
+      } else {
+        process.env.ANTIGRAVITY_IS_INTERNAL_ONLY = originalIsInternal;
+      }
+
+      if (originalScopes === undefined) {
+        delete process.env.ANTIGRAVITY_SCOPES;
+      } else {
+        process.env.ANTIGRAVITY_SCOPES = originalScopes;
+      }
     }
   });
 });

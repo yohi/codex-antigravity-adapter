@@ -28,8 +28,8 @@ export const ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback";
 
 // This adapter is for Google-internal Antigravity (Cloud Code Assist API) only.
 // The API endpoint uses /v1internal:loadCodeAssist which is not available to external applications.
-// If this adapter were to be used externally, set IS_INTERNAL_ONLY to false.
-export const IS_INTERNAL_ONLY = true;
+// If this adapter were to be used externally, set ANTIGRAVITY_IS_INTERNAL_ONLY=false in environment.
+export const IS_INTERNAL_ONLY = process.env.ANTIGRAVITY_IS_INTERNAL_ONLY !== 'false';
 
 // OAuth scopes for Antigravity API access
 // WARNING: The broad "cloud-platform" scope grants access to all Google Cloud Platform services.
