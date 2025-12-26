@@ -42,7 +42,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - フォールバック時の projectId 設定要求エラー生成
   - _Requirements: 2.1, 2.2, 2.4_
 
-- [ ] 2.4 認証ルーターとエンドポイントの実装
+- [x] 2.4 認証ルーターとエンドポイントの実装
   - ポート 51121 での Auth Server の起動
   - `/login` エンドポイント（OAuth 認可 URL へリダイレクト）
   - `/oauth-callback` エンドポイント（state 検証、トークン交換、成功/失敗の HTML レスポンス）

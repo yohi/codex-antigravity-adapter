@@ -5,6 +5,8 @@
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+node_modules/
+bun.lock
 
 # Environment variables and credentials
 .env
