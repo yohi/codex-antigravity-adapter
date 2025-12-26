@@ -325,10 +325,30 @@ interface AuthSessionStore {
 **Responsibilities & Constraints**
 - JSON ファイルへのトークン読み書き
 - トークン有効期限の検証
-- 自動リフレッシュ実行
+- 自動リフレッシュ実行（指数バックオフ付き）
 - projectId の保存と取得
 - projectId は解決済みの値のみを保存し、空文字は保存しない
 - 保存時は一時ファイルに書き込み → fsync → atomic rename を行い、部分書き込みを防止
+
+**Atomic Write Implementation**:
+- 一時ファイル命名規則: `antigravity-tokens.json.tmp.${process.pid}.${randomHex(8)}`（プロセスID + ランダム8桁16進数で競合回避）
+- fsync 対象: 一時ファイルのファイルディスクリプタを fsync 後、親ディレクトリも fsync（ext4/XFS での永続性保証）
+- プラットフォーム別権限設定:
+  - POSIX (Linux/macOS): `chmod(0o600)` でユーザーのみ読み書き可能
+  - Windows: 一時ファイル作成時に `fs.constants.O_EXCL` を使用し、作成後に `icacls` コマンドまたは Node.js の `fs.chmod` で可能な範囲で制限（Windows では完全な chmod 互換性なし、ベストエフォート）
+
+**Token Refresh Strategy**:
+- Google OAuth リフレッシュトークン有効期限:
+  - 通常: refresh_token は無期限だが、6ヶ月の非使用期間で無効化される
+  - テスト環境: 7日で有効期限切れ
+  - 時間制限アクセス選択時: `refresh_token_expires_in` で期限が指定される（トークンレスポンスに含まれる場合は保存する）
+- 自動リフレッシュ条件: アクセストークン有効期限の 5 分前、または既に期限切れの場合
+- リフレッシュ失敗時の再試行戦略:
+  - 最大試行回数: 3回
+  - バックオフアルゴリズム: 指数バックオフ（2^n 秒、n = 試行回数 - 1）
+  - 最大待機時間: 8秒（1秒 → 2秒 → 4秒）
+  - 再試行対象エラー: ネットワークエラー、5xx サーバーエラー
+  - 再試行不可エラー: `invalid_grant`（再認証要求）、400 クライアントエラー
 
 **Dependencies**
 - Inbound: AuthService, TransformService — トークン操作 (P0)
@@ -358,7 +378,8 @@ interface TokenStore {
 type TokenPair = {
   accessToken: string;
   refreshToken: string;
-  expiresAt: number; // Unix timestamp (ms)
+  expiresAt: number; // Unix timestamp (ms) - アクセストークン有効期限
+  refreshTokenExpiresAt?: number; // Unix timestamp (ms) - リフレッシュトークン有効期限（refresh_token_expires_in が指定された場合のみ）
   projectId: string;
 };
 
@@ -723,11 +744,12 @@ interface ResponseTransformer {
 **TokenPair Entity**:
 ```typescript
 type TokenPair = {
-  accessToken: string;       // Antigravity API アクセストークン
-  refreshToken: string;      // OAuth リフレッシュトークン
-  expiresAt: number;         // 有効期限 (Unix ms)
-  projectId: string;         // Antigravity projectId
-  scope?: string;            // 付与されたスコープ
+  accessToken: string;            // Antigravity API アクセストークン
+  refreshToken: string;           // OAuth リフレッシュトークン
+  expiresAt: number;              // アクセストークン有効期限 (Unix ms)
+  refreshTokenExpiresAt?: number; // リフレッシュトークン有効期限 (Unix ms)（Google OAuth が refresh_token_expires_in を返す場合のみ）
+  projectId: string;              // Antigravity projectId
+  scope?: string;                 // 付与されたスコープ
 };
 ```
 
@@ -983,7 +1005,14 @@ codex-antigravity-adapter/
 ### Unit Tests
 - RequestTransformer: messages → contents 変換、tool_calls / tool ロール変換、tool_call_id 整合性検証、Thinking 互換（判定/正規化/Strip-then-Inject/ヘッダー/ヒント）、署名キャッシュ欠損エラー、tool スキーマサニタイズ、systemInstruction 正規化、`tool_choice` 変換不可エラー
 - ResponseTransformer: candidates → choices 変換、functionCall → tool_calls 変換、署名キャッシュ保存、SSE チャンク生成
-- TokenStore: ファイル読み書き、atomic 書き換え、パーミッション設定、有効期限判定、リフレッシュロジック
+- TokenStore:
+  - ファイル読み書き、atomic 書き換え（一時ファイル命名、fsync、atomic rename）
+  - パーミッション設定（POSIX chmod 600、Windows ベストエフォート）
+  - 有効期限判定（アクセストークン、リフレッシュトークン）
+  - リフレッシュロジック（指数バックオフ、最大3回試行、再試行対象エラー判定）
+  - `refresh_token_expires_in` の保存と検証
+  - 並行書き込み時のファイル名競合回避（プロセスID + ランダム8桁）
+  - 親ディレクトリ fsync の実行確認
 - Zod スキーマ: 各種バリデーションケース、`content` 配列の text 結合、tool_calls 許可、マルチモーダル拒否、`logprobs` / `n > 1` 拒否
 
 ### Integration Tests
@@ -1008,7 +1037,68 @@ codex-antigravity-adapter/
 - トークンファイルのパーミッションを 600 に設定
 - 保存時は一時ファイル → atomic rename で部分書き込みを防止
 - アクセストークンは可能な限り短い有効期限（Antigravity API 依存）
-- 署名キャッシュはメモリのみで保持し、TTL 経過後に破棄する
+
+**Token Lifecycle and Handling**:
+- **Refresh Token Lifetime**:
+  - プロバイダー側のトークン有効期限ポリシーに従う（例: Google の OAuth 2.0 リフレッシュトークンは未使用状態で約6ヶ月後に失効する可能性がある）
+  - `refresh_token_expires_in` フィールドが存在する場合は保存し、TokenStore の有効期限判定に使用
+  - 設定項目: `REFRESH_TOKEN_EXPIRY_MARGIN` (デフォルト: 3600秒) - 有効期限前にこの秒数分の余裕を持たせてリフレッシュを試行
+- **User-Facing Fallback**:
+  - リフレッシュトークンが失効した場合、プロキシは HTTP 401 エラーを返し、以下のメッセージをログおよびエラーレスポンスに含める:
+    ```
+    Authentication expired. Your refresh token is no longer valid.
+    Please re-authenticate by running: codex-antigravity-adapter --login
+    ```
+  - CLI は `--login` オプションで OAuth フローを再実行可能にする
+  - 設定項目: `RE_AUTH_URL` (デフォルト: `http://127.0.0.1:8080/login`) - エラーメッセージに含める認証URL
+
+**Token File Deletion Handling**:
+- **Startup Existence Checks**:
+  - サーバー起動時に TokenStore がトークンファイルの存在を確認
+  - ファイルが存在しない場合、INFO レベルでログに記録し、認証未完了状態として扱う
+  - プロキシリクエストが来た時点で 401 + 認証URL案内を返す
+- **Refresh-Time Existence Checks**:
+  - トークンリフレッシュ前にファイルの存在を再確認
+  - ファイルが外部削除されていた場合、`TokenFileDeletedError` をスローし、呼び出し元で 401 応答に変換
+  - エラーメッセージ例:
+    ```
+    Token file was deleted. Please re-authenticate by running: codex-antigravity-adapter --login
+    ```
+- **Graceful Error Handling**:
+  - ファイル削除検知時は即座に認証状態をクリアし、次回リクエストで再認証を促す
+  - リトライロジックではファイル削除エラーを再試行対象外とする（即座に 401 を返す）
+- **Automated Re-Auth**:
+  - CLI に `--auto-reauth` フラグを追加（デフォルト: false）
+  - 有効化した場合、トークンファイル削除検知時に自動的に `/login` にリダイレクトしてブラウザで認証フローを開始
+  - 設定項目: `AUTO_REAUTH_ENABLED` (デフォルト: false) - 自動再認証の有効化フラグ
+
+**Signature Cache Confidentiality**:
+- **Configurable Cache TTL**:
+  - 設定項目: `SIGNATURE_CACHE_TTL` (デフォルト: 300秒 / 5分) - 署名キャッシュの有効期限
+  - 設定項目: `SIGNATURE_CACHE_MAX_SIZE` (デフォルト: 100エントリ) - メモリ使用量制限のための最大キャッシュサイズ
+  - TTL 経過後または `max_size` 超過時の LRU エビクション時に、キャッシュエントリをメモリから安全に削除
+- **In-Memory Protections**:
+  - **Memory Zeroing**: キャッシュエビクション時に、署名データ（`prompt_hash`, `cacheToken`, `expiresAt`）を含むメモリ領域をゼロ埋め（`memset` 相当）してから解放
+  - **mlock Recommendation**: 本番環境では、可能であれば署名キャッシュを保持するメモリページに `mlock()` を適用し、スワップアウトを防止（設定項目: `USE_MLOCK_FOR_CACHE`, デフォルト: false、Linux/macOS のみ対応）
+  - 実装例（Node.js）:
+    ```typescript
+    class SignatureCache {
+      private cache = new Map<string, CacheEntry>();
+
+      evict(key: string) {
+        const entry = this.cache.get(key);
+        if (entry) {
+          // Zero-fill sensitive data before deletion
+          entry.cacheToken = '\0'.repeat(entry.cacheToken.length);
+          entry.prompt_hash = '\0'.repeat(entry.prompt_hash.length);
+        }
+        this.cache.delete(key);
+      }
+    }
+    ```
+- **TTL Enforcement**:
+  - バックグラウンドタスクまたはアクセス時チェックで TTL 超過エントリを定期的にスキャンし、ゼロ埋め後に削除
+  - 設定項目: `SIGNATURE_CACHE_CLEANUP_INTERVAL` (デフォルト: 60秒) - TTL チェックとクリーンアップの実行間隔
 
 **Network**:
 - ローカルホストのみでリッスン（127.0.0.1）
