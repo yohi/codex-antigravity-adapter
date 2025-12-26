@@ -32,7 +32,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - トークンファイル削除検知とエラーハンドリング
   - _Requirements: 2.3, 2.4, 2.5_
 
-- [ ] 2.3 OAuth 認証サービスの実装
+- [x] 2.3 OAuth 認証サービスの実装
   - PKCE 対応の OAuth 認可 URL 生成機能
   - state パラメータの生成と HMAC 署名付与
   - AuthSessionStore（インメモリ、TTL 5 分）の実装
