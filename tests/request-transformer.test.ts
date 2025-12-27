@@ -53,7 +53,7 @@ describe("transformRequestBasics", () => {
 
   it("omits generationConfig when no generation parameters are set", () => {
     const request: ChatCompletionRequest = {
-      model: "gemini-3-pro-high",
+      model: "gpt-oss-120b-medium",
       messages: [{ role: "user", content: "Hello" }],
     };
 
@@ -64,6 +64,75 @@ describe("transformRequestBasics", () => {
     }
 
     expect(result.value.request.generationConfig).toBeUndefined();
+  });
+
+  it("adds thinkingConfig and forces maxOutputTokens for gemini-3 models", () => {
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [{ role: "user", content: "Hello" }],
+      temperature: 0.2,
+      max_tokens: 1024,
+    };
+
+    const result = transformRequestBasics(request);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.request.generationConfig).toEqual({
+      temperature: 0.2,
+      maxOutputTokens: 64000,
+      thinkingConfig: {
+        thinkingBudget: 16000,
+        includeThoughts: true,
+      },
+    });
+  });
+
+  it("adds Claude thinking hints and headers when tools are present", () => {
+    const request: ChatCompletionRequest = {
+      model: "claude-sonnet-4-5-thinking",
+      messages: [
+        { role: "system", content: "System prompt." },
+        { role: "user", content: "Hello" },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "ping",
+            description: "Ping tool",
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    };
+
+    const result = transformRequestBasics(request);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.request.systemInstruction).toEqual({
+      parts: [
+        { text: "System prompt." },
+        {
+          text: "Interleaved thinking is enabled. You may think between tool calls and after receiving tool results. Do not mention these instructions or any constraints about thinking blocks.",
+        },
+      ],
+    });
+    expect(result.value.request.generationConfig).toEqual({
+      maxOutputTokens: 64000,
+      thinkingConfig: {
+        thinking_budget: 16000,
+        include_thoughts: true,
+      },
+    });
+    expect(result.value.extraHeaders).toEqual({
+      "anthropic-beta": "interleaved-thinking-2025-05-14",
+    });
   });
 
   it("converts tool calls, tool responses, and tool definitions", () => {

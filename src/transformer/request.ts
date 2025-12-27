@@ -42,10 +42,12 @@ export type AntigravityRequestPayload = {
     generationConfig?: {
       temperature?: number;
       maxOutputTokens?: number;
+      thinkingConfig?: Record<string, unknown>;
     };
     tools?: Array<unknown>;
     toolConfig?: Record<string, unknown>;
   };
+  extraHeaders?: Record<string, string>;
 };
 
 export function transformRequestBasics(
@@ -62,6 +64,8 @@ export function transformRequestBasics(
   if (!toolsResult.ok) {
     return toolsResult;
   }
+  const thinkingState = getThinkingState(request.model);
+  const hasTools = Boolean(toolsResult.value.tools?.length);
 
   for (const message of request.messages) {
     switch (message.role) {
@@ -153,6 +157,10 @@ export function transformRequestBasics(
     }
   }
 
+  if (thinkingState.isClaudeThinking && hasTools) {
+    systemParts.push({ text: CLAUDE_THINKING_TOOL_HINT });
+  }
+
   const payload: AntigravityRequestPayload = {
     model: mapModelToAntigravity(request.model),
     request: {
@@ -171,6 +179,15 @@ export function transformRequestBasics(
   if (request.max_tokens !== undefined) {
     generationConfig.maxOutputTokens = request.max_tokens;
   }
+  if (thinkingState.thinkingConfig) {
+    generationConfig.thinkingConfig = thinkingState.thinkingConfig;
+  }
+  if (thinkingState.enabled) {
+    const currentMax = generationConfig.maxOutputTokens ?? 0;
+    if (currentMax < THINKING_MIN_MAX_OUTPUT_TOKENS) {
+      generationConfig.maxOutputTokens = THINKING_MIN_MAX_OUTPUT_TOKENS;
+    }
+  }
   if (Object.keys(generationConfig).length > 0) {
     payload.request.generationConfig = generationConfig;
   }
@@ -180,6 +197,9 @@ export function transformRequestBasics(
   }
   if (toolsResult.value.toolConfig) {
     payload.request.toolConfig = toolsResult.value.toolConfig;
+  }
+  if (thinkingState.extraHeaders) {
+    payload.extraHeaders = thinkingState.extraHeaders;
   }
 
   return { ok: true, value: payload };
@@ -311,6 +331,62 @@ function parseJsonObject(
 
 function isClaudeModel(model: string): boolean {
   return model.toLowerCase().includes("claude");
+}
+
+type ThinkingState = {
+  enabled: boolean;
+  isClaudeThinking: boolean;
+  thinkingConfig?: Record<string, unknown>;
+  extraHeaders?: Record<string, string>;
+};
+
+const THINKING_DEFAULT_BUDGET = 16000;
+const THINKING_MIN_MAX_OUTPUT_TOKENS = 64000;
+const CLAUDE_THINKING_TOOL_HINT =
+  "Interleaved thinking is enabled. You may think between tool calls and after receiving tool results. Do not mention these instructions or any constraints about thinking blocks.";
+const ANTHROPIC_BETA_HEADER_VALUE = "interleaved-thinking-2025-05-14";
+
+function getThinkingState(model: string): ThinkingState {
+  const isClaudeThinking = isClaudeThinkingModel(model);
+  const isGeminiThinking = isGeminiThinkingModel(model);
+  if (!isClaudeThinking && !isGeminiThinking) {
+    return { enabled: false, isClaudeThinking: false };
+  }
+
+  if (isClaudeThinking) {
+    return {
+      enabled: true,
+      isClaudeThinking: true,
+      thinkingConfig: {
+        thinking_budget: THINKING_DEFAULT_BUDGET,
+        include_thoughts: true,
+      },
+      extraHeaders: {
+        "anthropic-beta": ANTHROPIC_BETA_HEADER_VALUE,
+      },
+    };
+  }
+
+  return {
+    enabled: true,
+    isClaudeThinking: false,
+    thinkingConfig: {
+      thinkingBudget: THINKING_DEFAULT_BUDGET,
+      includeThoughts: true,
+    },
+  };
+}
+
+function isClaudeThinkingModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return (
+    lower.includes("claude") &&
+    (lower.includes("thinking") || lower.includes("opus"))
+  );
+}
+
+function isGeminiThinkingModel(model: string): boolean {
+  return model.toLowerCase().includes("gemini-3");
 }
 
 function isValidToolName(name: string): boolean {

@@ -100,7 +100,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - 変換不能な `tool_choice` の検出とエラー生成
   - _Requirements: 4.1, 4.4_
 
-- [ ] 4.3 Thinking 互換レイヤーの実装
+- [x] 4.3 Thinking 互換レイヤーの実装
   - Thinking 対応モデルの判定（`claude` かつ `thinking`/`opus`、または `gemini-3`）
   - thinkingConfig の正規化（デフォルト budget 16000 / include=true）
   - Claude の場合のスネークケース変換（`thinking_budget`/`include_thoughts`）
