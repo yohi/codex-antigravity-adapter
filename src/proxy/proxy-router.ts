@@ -16,6 +16,8 @@ export type ProxyServerOptions = {
 
 export type ProxyTokenStore = {
   getAccessToken: () => Promise<
+    | string
+    | null
     | { ok: true; value: { accessToken: string; projectId: string } }
     | { ok: false; error: { requiresReauth: boolean; message: string } }
   >;
@@ -25,6 +27,7 @@ export type ProxyTransformService = {
   handleCompletion: (
     request: unknown
   ) => Promise<
+    | unknown
     | { ok: true; value: unknown }
     | { ok: false; error: { statusCode: number; message: string } }
   >;
@@ -53,7 +56,9 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
   const app = new Hono();
 
   app.post("/v1/chat/completions", async (c) => {
-    const tokenResult = await options.tokenStore.getAccessToken();
+    const tokenResult = normalizeTokenResult(
+      await options.tokenStore.getAccessToken()
+    );
     if (!tokenResult.ok) {
       if (tokenResult.error.requiresReauth) {
         return c.json(authenticationRequiredError(), 401);
@@ -100,7 +105,9 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
       );
     }
 
-    const result = await options.transformService.handleCompletion(parsed.data);
+    const result = normalizeTransformResult(
+      await options.transformService.handleCompletion(parsed.data)
+    );
     if (!result.ok) {
       const status = result.error.statusCode || 500;
       return c.json(
@@ -187,3 +194,40 @@ function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
   return typeof ReadableStream !== "undefined" && value instanceof ReadableStream;
 }
 
+function normalizeTokenResult(
+  tokenResult:
+    | string
+    | null
+    | { ok: true; value: { accessToken: string; projectId: string } }
+    | { ok: false; error: { requiresReauth: boolean; message: string } }
+): { ok: true; value: { accessToken: string; projectId: string } } | { ok: false; error: { requiresReauth: boolean; message: string } } {
+  if (tokenResult === null) {
+    return {
+      ok: false,
+      error: { requiresReauth: true, message: "Token is missing" },
+    };
+  }
+  if (typeof tokenResult === "string") {
+    return { ok: true, value: { accessToken: tokenResult, projectId: "" } };
+  }
+  return tokenResult;
+}
+
+function normalizeTransformResult(
+  result:
+    | unknown
+    | { ok: true; value: unknown }
+    | { ok: false; error: { statusCode: number; message: string } }
+): { ok: true; value: unknown } | { ok: false; error: { statusCode: number; message: string } } {
+  if (
+    typeof result === "object" &&
+    result !== null &&
+    "ok" in result &&
+    typeof (result as { ok?: unknown }).ok === "boolean"
+  ) {
+    return result as
+      | { ok: true; value: unknown }
+      | { ok: false; error: { statusCode: number; message: string } };
+  }
+  return { ok: true, value: result };
+}

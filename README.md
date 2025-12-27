@@ -22,11 +22,23 @@ Codex CLI 向けの Antigravity Adapter（ローカルプロキシ）です。�
 
 ```ts
 import { createProxyApp, startProxyServer } from "./src/proxy/proxy-router";
+import type { ProxyTokenStore, ProxyTransformService } from "./src/proxy/proxy-router";
+
+const tokenStore: ProxyTokenStore = {
+  // 期待シグネチャ: `getAccessToken(): Promise<string | null>`（簡易スタブ）
+  getAccessToken: async () => null,
+};
+
+const transformService: ProxyTransformService = {
+  // 期待シグネチャ: `handleCompletion(input): Promise<output>`（簡易スタブ）
+  handleCompletion: async (_input) => ({ id: "stubbed-response" }),
+};
 
 const app = createProxyApp({ tokenStore, transformService });
 
 startProxyServer(app, {
   serve: ({ fetch, port, hostname }) => {
+    // `port` と `hostname` は省略可能（デフォルト: port=3000, hostname="127.0.0.1"）
     // ここで任意のHTTPサーバ実装に `fetch` を接続する（テスト用スタブでも可）
     return { stop: () => undefined };
   },
