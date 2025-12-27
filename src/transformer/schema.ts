@@ -24,22 +24,29 @@ const UserMessageSchema = z.object({
   content: UserContentSchema,
 });
 
-const AssistantMessageSchema = z.object({
-  role: z.literal("assistant"),
-  content: z.string().nullable().optional(),
-  tool_calls: z
-    .array(
-      z.object({
-        id: z.string(),
-        type: z.literal("function"),
-        function: z.object({
-          name: z.string(),
-          arguments: z.string(),
-        }),
-      })
-    )
-    .optional(),
-});
+const AssistantMessageSchema = z
+  .object({
+    role: z.literal("assistant"),
+    content: z.string().nullable().optional(),
+    tool_calls: z
+      .array(
+        z.object({
+          id: z.string(),
+          type: z.literal("function"),
+          function: z.object({
+            name: z.string(),
+            arguments: z.string(),
+          }),
+        })
+      )
+      .optional(),
+  })
+  .refine(
+    (msg) =>
+      (msg.content !== null && msg.content !== undefined) ||
+      (msg.tool_calls && msg.tool_calls.length > 0),
+    "Assistant message must have either content or tool_calls"
+  );
 
 const ToolMessageSchema = z.object({
   role: z.literal("tool"),
@@ -47,7 +54,7 @@ const ToolMessageSchema = z.object({
   content: z.string(),
 });
 
-const ChatCompletionMessageSchema = z.discriminatedUnion("role", [
+const ChatCompletionMessageSchema = z.union([
   SystemMessageSchema,
   UserMessageSchema,
   AssistantMessageSchema,

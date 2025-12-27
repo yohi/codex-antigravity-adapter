@@ -106,6 +106,17 @@ describe("ChatCompletionRequestSchema", () => {
     });
   });
 
+  it("rejects assistant messages with neither content nor tool_calls", () => {
+    const request = {
+      ...baseRequest,
+      messages: [...baseRequest.messages, { role: "assistant" }],
+    };
+
+    expect(() => ChatCompletionRequestSchema.parse(request)).toThrow(
+      "Assistant message must have either content or tool_calls"
+    );
+  });
+
   it("accepts tools and tool_choice function", () => {
     const request = {
       ...baseRequest,
