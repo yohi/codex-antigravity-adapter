@@ -11,7 +11,8 @@ type TokenStore = {
 
 type TransformService = {
   handleCompletion: (
-    request: unknown
+    request: unknown,
+    tokens: { accessToken: string; projectId: string }
   ) => Promise<
     | { ok: true; value: unknown }
     | { ok: false; error: { statusCode: number; message: string } }
@@ -92,6 +93,7 @@ describe("Proxy router", () => {
 
   it("delegates to TransformService for valid requests", async () => {
     let captured: unknown | null = null;
+    let capturedTokens: { accessToken: string; projectId: string } | null = null;
     const app = createProxyApp({
       tokenStore: createTokenStoreStub({
         getAccessToken: async () => ({
@@ -100,8 +102,9 @@ describe("Proxy router", () => {
         }),
       }),
       transformService: createTransformServiceStub({
-        handleCompletion: async (request) => {
+        handleCompletion: async (request, tokens) => {
           captured = request;
+          capturedTokens = tokens;
           return { ok: true, value: { id: "resp-1" } };
         },
       }),
@@ -116,6 +119,7 @@ describe("Proxy router", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "resp-1" });
     expect(captured).toBeTruthy();
+    expect(capturedTokens).toEqual({ accessToken: "token", projectId: "project-id" });
   });
 
   it("returns a fixed model list from /v1/models", async () => {
@@ -178,4 +182,3 @@ describe("Proxy router", () => {
     expect(server).toBeDefined();
   });
 });
-

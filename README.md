@@ -30,8 +30,8 @@ const tokenStore: ProxyTokenStore = {
 };
 
 const transformService: ProxyTransformService = {
-  // 期待シグネチャ: `handleCompletion(input): Promise<output>`（簡易スタブ）
-  handleCompletion: async (_input) => ({ id: "stubbed-response" }),
+  // 期待シグネチャ: `handleCompletion(input, tokens): Promise<output>`（簡易スタブ）
+  handleCompletion: async (_input, _tokens) => ({ id: "stubbed-response" }),
 };
 
 const app = createProxyApp({ tokenStore, transformService });

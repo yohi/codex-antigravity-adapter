@@ -23,9 +23,15 @@ export type ProxyTokenStore = {
   >;
 };
 
+export type ProxyTokens = {
+  accessToken: string;
+  projectId: string;
+};
+
 export type ProxyTransformService = {
   handleCompletion: (
-    request: unknown
+    request: unknown,
+    tokens: ProxyTokens
   ) => Promise<
     | unknown
     | { ok: true; value: unknown }
@@ -74,6 +80,7 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
         500
       );
     }
+    const tokens = tokenResult.value;
 
     let payload: unknown;
     try {
@@ -106,7 +113,7 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     }
 
     const result = normalizeTransformResult(
-      await options.transformService.handleCompletion(parsed.data)
+      await options.transformService.handleCompletion(parsed.data, tokens)
     );
     if (!result.ok) {
       const status = result.error.statusCode || 500;
@@ -198,9 +205,9 @@ function normalizeTokenResult(
   tokenResult:
     | string
     | null
-    | { ok: true; value: { accessToken: string; projectId: string } }
+    | { ok: true; value: ProxyTokens }
     | { ok: false; error: { requiresReauth: boolean; message: string } }
-): { ok: true; value: { accessToken: string; projectId: string } } | { ok: false; error: { requiresReauth: boolean; message: string } } {
+): { ok: true; value: ProxyTokens } | { ok: false; error: { requiresReauth: boolean; message: string } } {
   if (tokenResult === null) {
     return {
       ok: false,
