@@ -109,7 +109,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - `anthropic-beta: interleaved-thinking-2025-05-14` ヘッダーの付与
   - _Requirements: 4.2_
 
-- [ ] 4.4 署名キャッシュと Strip-then-Inject の実装
+- [x] 4.4 署名キャッシュと Strip-then-Inject の実装
   - 署名キャッシュ（インメモリ LRU、最大 512 件、TTL 10 分）の実装
   - `sessionId` の生成（プロセス起動時に固定 ID を生成）
   - 思考ブロックの検出（`type: "thinking"|"redacted_thinking"|"reasoning"` または `signature`/`thoughtSignature`）
