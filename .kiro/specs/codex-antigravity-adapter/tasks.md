@@ -52,7 +52,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - _Requirements: 1.2, 1.4, 2.1, 2.2, 2.4_
 
 - [ ] 3. プロキシドメインの実装
-- [ ] 3.1 OpenAI 互換リクエストスキーマの定義と検証
+- [x] 3.1 OpenAI 互換リクエストスキーマの定義と検証
   - Zod スキーマによる ChatCompletionRequest の定義
   - `messages` 配列の検証（system, user, assistant, tool ロール対応）
   - `content` 配列の text 結合処理（`type: "text"` のみ許可）
