@@ -25,8 +25,11 @@ import { createProxyApp, startProxyServer } from "./src/proxy/proxy-router";
 import type { ProxyTokenStore, ProxyTransformService } from "./src/proxy/proxy-router";
 
 const tokenStore: ProxyTokenStore = {
-  // 期待シグネチャ: `getAccessToken(): Promise<string | null>`（簡易スタブ）
-  getAccessToken: async () => null,
+  // 期待シグネチャ: `getAccessToken(): Promise<{ ok: true; value: { accessToken; projectId } } | { ok: false; error: { requiresReauth; message } }>`（簡易スタブ）
+  getAccessToken: async () => ({
+    ok: false,
+    error: { requiresReauth: true, message: "Missing token" },
+  }),
 };
 
 const transformService: ProxyTransformService = {

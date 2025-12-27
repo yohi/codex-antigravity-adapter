@@ -16,9 +16,7 @@ export type ProxyServerOptions = {
 
 export type ProxyTokenStore = {
   getAccessToken: () => Promise<
-    | string
-    | null
-    | { ok: true; value: { accessToken: string; projectId: string } }
+    | { ok: true; value: ProxyTokens }
     | { ok: false; error: { requiresReauth: boolean; message: string } }
   >;
 };
@@ -215,7 +213,15 @@ function normalizeTokenResult(
     };
   }
   if (typeof tokenResult === "string") {
-    return { ok: true, value: { accessToken: tokenResult, projectId: "" } };
+    return {
+      ok: false,
+      error: {
+        requiresReauth: false,
+        message:
+          "Token store returned an access token without a project ID. " +
+          "Update the token store to return { ok: true, value: { accessToken, projectId } }.",
+      },
+    };
   }
   return tokenResult;
 }
