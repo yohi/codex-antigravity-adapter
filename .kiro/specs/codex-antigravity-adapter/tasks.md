@@ -64,7 +64,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - `n` パラメータの制約（1 のみ許可）
   - _Requirements: 3.1, 3.2_
 
-- [ ] 3.2 OpenAI 互換ルーターの実装
+- [x] 3.2 OpenAI 互換ルーターの実装
   - ポート 3000 での Proxy Server の起動
   - `/v1/chat/completions` エンドポイント（POST）
   - Zod スキーマによるリクエストバリデーション
