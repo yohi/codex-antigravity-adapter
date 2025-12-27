@@ -87,7 +87,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - `systemInstruction` の `parts` オブジェクト形式への正規化
   - _Requirements: 4.1, 4.4_
 
-- [ ] 4.2 ツール関連の変換実装
+- [x] 4.2 ツール関連の変換実装
   - `assistant.tool_calls` → `functionCall` への変換
   - `tool` ロール → `functionResponse` への変換
   - `tool_call_id` と `function.name` の対応表の構築

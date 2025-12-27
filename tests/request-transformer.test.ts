@@ -66,17 +66,128 @@ describe("transformRequestBasics", () => {
     expect(result.value.request.generationConfig).toBeUndefined();
   });
 
-  it("returns unsupported error for tool messages and definitions", () => {
+  it("converts tool calls, tool responses, and tool definitions", () => {
     const request: ChatCompletionRequest = {
       model: "gemini-3-pro-high",
       messages: [
         { role: "user", content: "Hello" },
-        { role: "tool", tool_call_id: "call-1", content: "result" },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: {
+                name: "get_weather",
+                arguments: "{\"city\":\"Tokyo\"}",
+              },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-1",
+          content: "{\"temperature\":25}",
+        },
       ],
       tools: [
         {
           type: "function",
-          function: { name: "do_work", parameters: { type: "object" } },
+          function: {
+            name: "get_weather",
+            description: "Fetch weather",
+            parameters: {
+              type: "object",
+              $schema: "http://json-schema.org/draft-07/schema#",
+              properties: {
+                city: { type: "string", const: "Tokyo" },
+              },
+              required: ["city"],
+            },
+          },
+        },
+      ],
+      tool_choice: {
+        type: "function",
+        function: { name: "get_weather" },
+      },
+    };
+
+    const result = transformRequestBasics(request);
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.request.contents).toEqual([
+      { role: "user", parts: [{ text: "Hello" }] },
+      {
+        role: "model",
+        parts: [
+          {
+            functionCall: {
+              name: "get_weather",
+              args: { city: "Tokyo" },
+            },
+          },
+        ],
+      },
+      {
+        role: "user",
+        parts: [
+          {
+            functionResponse: {
+              name: "get_weather",
+              response: { temperature: 25 },
+            },
+          },
+        ],
+      },
+    ]);
+    expect(result.value.request.tools).toEqual([
+      {
+        functionDeclarations: [
+          {
+            name: "get_weather",
+            description: "Fetch weather",
+            parameters: {
+              type: "object",
+              properties: {
+                city: { type: "string", enum: ["Tokyo"] },
+              },
+              required: ["city"],
+            },
+          },
+        ],
+      },
+    ]);
+    expect(result.value.request.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: "ANY",
+        allowedFunctionNames: ["get_weather"],
+      },
+    });
+  });
+
+  it("returns an error when tool_call_id is unknown", () => {
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "do_work", arguments: "{\"ok\":true}" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call-2",
+          content: "{\"ok\":true}",
         },
       ],
     };
@@ -87,6 +198,56 @@ describe("transformRequestBasics", () => {
       return;
     }
 
-    expect(result.error.code).toBe("UNSUPPORTED_FEATURE");
+    expect(result.error.code).toBe("INVALID_MESSAGE_FORMAT");
+  });
+
+  it("returns an error when tool arguments are not valid JSON", () => {
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [
+        {
+          role: "assistant",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "do_work", arguments: "{bad json}" },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = transformRequestBasics(request);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.code).toBe("INVALID_MESSAGE_FORMAT");
+  });
+
+  it("returns an error when tool names are invalid", () => {
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [{ role: "user", content: "Hello" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "bad name",
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    };
+
+    const result = transformRequestBasics(request);
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.code).toBe("INVALID_MESSAGE_FORMAT");
   });
 });
