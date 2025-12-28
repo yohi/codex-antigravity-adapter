@@ -364,9 +364,11 @@ function extractMessageParts(
   const texts: string[] = [];
   const toolCalls: ToolCall[] = [];
   let toolCallIndex = 0;
+  let sawThinking = false;
 
   for (const part of parts) {
     if (isThinkingBlock(part)) {
+      sawThinking = true;
       storeThinkingBlock(signatureCache, sessionId, part);
       continue;
     }
@@ -422,6 +424,9 @@ function extractMessageParts(
     );
   }
   if (texts.length === 0 && toolCalls.length === 0) {
+    if (sawThinking) {
+      return { ok: true, value: { content: null } };
+    }
     return invalidMessage(
       "candidates.content.parts",
       "Candidate content must include text or tool calls."
