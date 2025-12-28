@@ -229,7 +229,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - エラーハンドリング統合テスト（バリデーションエラー、API エラー、ネットワークエラー）
   - _Requirements: 全要件の統合レベル検証_
 
-- [ ] 9. 統合とエンドツーエンドの検証
+- [x] 9. 統合とエンドツーエンドの検証
 - [x] 9.1 コンポーネント統合の検証
   - Auth Domain と Proxy Domain の連携確認
   - TokenStore と TransformService の統合確認
@@ -238,7 +238,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - エラーフロー全体の検証
   - _Requirements: 全要件の統合確認_
 
-- [ ] 9.2 実環境でのエンドツーエンドテスト
+- [x] 9.2 実環境でのエンドツーエンドテスト
   - Codex CLI 設定の構成（`config.toml` に antigravity プロバイダー追加）
   - プロキシの起動と OAuth 認証フローの実行
   - 実際の chat completion リクエストの実行（ストリーミング/非ストリーミング）

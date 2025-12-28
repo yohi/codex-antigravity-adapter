@@ -207,6 +207,40 @@ describe("transformSingle", () => {
     expect(entry?.signature).toEqual(signatureBlock);
   });
 
+  it("returns an empty assistant message when only thinking blocks are present", () => {
+    const response: AntigravityResponse = {
+      model: "gemini-3-flash",
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                type: "thinking",
+                thinking: "Hidden plan",
+                signature: "sig-only-thinking",
+              },
+            ],
+          },
+          finishReason: "STOP",
+        },
+      ],
+    };
+
+    const result = transformSingle(response, "req-thinking-only", "session-1", {
+      now: () => 1_700_000_000_000,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.choices[0].message).toEqual({
+      role: "assistant",
+      content: null,
+    });
+  });
+
   it("prunes expired signature cache entries when saving new blocks", () => {
     let now = 0;
     class TrackingCache extends SignatureCache {
