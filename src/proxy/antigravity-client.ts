@@ -3,12 +3,15 @@ import {
   ANTIGRAVITY_ENDPOINT_DAILY,
   ANTIGRAVITY_ENDPOINT_PROD,
 } from "../config/antigravity";
+import { NOOP_LOGGER, type Logger } from "../logging";
 import type { AntigravityRequest } from "../transformer/request";
 import type { AntigravityRequester, ProxyError, Result } from "./transform-service";
 
 type CreateAntigravityRequesterOptions = {
   fetch?: typeof fetch;
   endpoints?: string[];
+  logger?: Logger;
+  now?: () => number;
 };
 
 type OpenAIErrorShape = {
@@ -30,6 +33,8 @@ export function createAntigravityRequester(
 ): AntigravityRequester {
   const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
   const endpoints = options.endpoints ?? DEFAULT_ENDPOINTS;
+  const logger = options.logger ?? NOOP_LOGGER;
+  const now = options.now ?? (() => Date.now());
 
   return async (
     request: AntigravityRequest,
@@ -42,6 +47,7 @@ export function createAntigravityRequester(
 
     for (const baseUrl of endpoints) {
       const url = `${baseUrl}${path}`;
+      const startedAt = now();
       let response: Response;
       try {
         response = await fetcher(url, {
@@ -50,9 +56,20 @@ export function createAntigravityRequester(
           body,
         });
       } catch (error) {
+        logger.error("antigravity_request_failed", {
+          endpoint: baseUrl,
+          durationMs: now() - startedAt,
+          message: error instanceof Error ? error.message : String(error),
+        });
         lastError = toNetworkError(error);
         continue;
       }
+      logger.info("antigravity_request_complete", {
+        endpoint: baseUrl,
+        status: response.status,
+        durationMs: now() - startedAt,
+        stream: requestOptions.stream,
+      });
 
       if (response.ok) {
         return { ok: true, value: response };

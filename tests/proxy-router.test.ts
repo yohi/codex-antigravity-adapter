@@ -182,6 +182,32 @@ describe("Proxy router", () => {
     });
   });
 
+  it("returns OpenAI-compatible error payloads for unexpected failures", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub({
+        handleCompletion: async () => {
+          throw new Error("Unexpected failure");
+        },
+      }),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gemini-3-flash", messages: [] }),
+    });
+
+    expect(response.status).toBe(500);
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        type: "server_error",
+        code: "internal_error",
+        message: "Unexpected failure",
+      },
+    });
+  });
+
   it("starts the proxy server on the default port", () => {
     const app = createProxyApp({
       transformService: createTransformServiceStub(),

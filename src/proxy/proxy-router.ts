@@ -130,6 +130,23 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     )
   );
 
+  app.onError((error, c) => {
+    const status = resolveErrorStatus(error);
+    const message =
+      error instanceof Error ? error.message : "Unexpected error occurred.";
+    const isServerError = status >= 500;
+    return c.json(
+      {
+        error: {
+          type: isServerError ? "server_error" : "invalid_request_error",
+          code: isServerError ? "internal_error" : "invalid_request",
+          message,
+        },
+      },
+      status
+    );
+  });
+
   return app;
 }
 
@@ -249,4 +266,14 @@ function extractUpstreamMapping(
     return { type: mapped.type, code: mapped.code };
   }
   return null;
+}
+
+function resolveErrorStatus(error: unknown): number {
+  if (error && typeof error === "object" && "status" in error) {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status === "number") {
+      return status;
+    }
+  }
+  return 500;
 }
