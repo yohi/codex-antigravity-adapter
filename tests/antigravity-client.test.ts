@@ -95,4 +95,30 @@ describe("Antigravity requester", () => {
       });
     }
   });
+
+  it("records request latency when a logger is provided", async () => {
+    const logs: Array<{ level: string; message: string; context?: Record<string, unknown> }> = [];
+    const timestamps = [1000, 1600];
+    const requester = createAntigravityRequester({
+      fetch: async () =>
+        new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      endpoints: ["https://daily.test"],
+      now: () => timestamps.shift() ?? 1600,
+      logger: {
+        debug: (message, context) =>
+          logs.push({ level: "debug", message, context }),
+        info: (message, context) => logs.push({ level: "info", message, context }),
+        warn: (message, context) => logs.push({ level: "warn", message, context }),
+        error: (message, context) => logs.push({ level: "error", message, context }),
+      },
+    });
+
+    await requester(baseRequest, { stream: false });
+
+    const entry = logs.find((log) => log.message === "antigravity_request_complete");
+    expect(entry?.context?.durationMs).toBe(600);
+  });
 });

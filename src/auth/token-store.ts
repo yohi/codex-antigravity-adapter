@@ -12,6 +12,7 @@ import {
   REFRESH_RETRY_BASE_MS,
   REFRESH_TOKEN_EXPIRY_MARGIN_MS,
 } from "../config/antigravity";
+import { NOOP_LOGGER, type Logger } from "../logging";
 
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
 
@@ -36,6 +37,7 @@ type TokenStoreOptions = {
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
   fileExists?: (filePath: string) => Promise<boolean>;
+  logger?: Logger;
 };
 
 type RefreshOutcome = {
@@ -58,6 +60,7 @@ export class FileTokenStore {
   private fetcher: typeof fetch;
   private sleep: (ms: number) => Promise<void>;
   private fileExists: (filePath: string) => Promise<boolean>;
+  private logger: Logger;
 
   constructor(options: TokenStoreOptions = {}) {
     this.filePath = options.filePath ?? DEFAULT_TOKEN_PATH;
@@ -65,6 +68,7 @@ export class FileTokenStore {
     this.fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.sleep = options.sleep ?? defaultSleep;
     this.fileExists = options.fileExists ?? defaultFileExists;
+    this.logger = options.logger ?? NOOP_LOGGER;
   }
 
   async getAccessToken(): Promise<
@@ -138,6 +142,7 @@ export class FileTokenStore {
     tokens: TokenPair,
     now: number
   ): Promise<Result<TokenPair, TokenError>> {
+    this.logger.info("token_refresh_start", { expiresAt: tokens.expiresAt });
     if (!tokens.refreshToken.trim()) {
       return refreshFailed("Refresh token is missing");
     }
@@ -150,6 +155,10 @@ export class FileTokenStore {
     }
     const refreshed = await this.requestTokenRefresh(tokens.refreshToken, now);
     if (!refreshed.ok) {
+      this.logger.error("token_refresh_failed", {
+        code: refreshed.error.code,
+        message: refreshed.error.message,
+      });
       return refreshed;
     }
     const updated: TokenPair = {
@@ -165,6 +174,7 @@ export class FileTokenStore {
     if (!saved.ok) {
       return saved;
     }
+    this.logger.info("token_refresh_success", { expiresAt: updated.expiresAt });
     return { ok: true, value: updated };
   }
 

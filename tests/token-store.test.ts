@@ -133,6 +133,45 @@ describe("FileTokenStore", () => {
     expect(persisted.refreshTokenExpiresAt).toBe(now + 7_200_000);
   });
 
+  it("logs refresh events when a logger is provided", async () => {
+    const now = Date.now();
+    const logs: Array<{ level: string; message: string }> = [];
+    const store = new FileTokenStore({
+      filePath: tokenFilePath,
+      now: () => now,
+      logger: {
+        debug: (message) => logs.push({ level: "debug", message }),
+        info: (message) => logs.push({ level: "info", message }),
+        warn: (message) => logs.push({ level: "warn", message }),
+        error: (message) => logs.push({ level: "error", message }),
+      },
+      fetch: async () =>
+        new Response(
+          JSON.stringify({
+            access_token: "refreshed-access-token",
+            expires_in: 300,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        ),
+    });
+    const tokens: TokenPair = {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: now - 1_000,
+      projectId: "project-123",
+    };
+
+    await store.saveTokens(tokens);
+    await store.getAccessToken();
+
+    const messages = logs.map((entry) => entry.message);
+    expect(messages).toContain("token_refresh_start");
+    expect(messages).toContain("token_refresh_success");
+  });
+
   it("retries refresh with exponential backoff on server errors", async () => {
     const now = Date.now();
     const delays: number[] = [];
