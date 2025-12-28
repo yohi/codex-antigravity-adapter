@@ -178,7 +178,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - Antigravity API エラーの OpenAI 互換エラーへの変換
   - _Requirements: 3.3, 3.5_
 
-- [ ] 6.3 ストリーミングレスポンスの処理
+- [x] 6.3 ストリーミングレスポンスの処理
   - Antigravity SSE ストリームの受信
   - ResponseTransformer を使用したストリーム変換
   - 変換済み SSE ストリームのクライアントへのパイプ処理

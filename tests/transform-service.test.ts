@@ -4,6 +4,35 @@ import { createTransformService } from "../src/proxy/transform-service";
 import type { AntigravityRequest } from "../src/transformer/request";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 
+async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) {
+      break;
+    }
+    output += decoder.decode(value, { stream: true });
+  }
+  output += decoder.decode();
+  return output;
+}
+
+function parseSseEvents(payload: string): string[] {
+  return payload
+    .split("\n\n")
+    .filter((event) => event.trim().length > 0)
+    .map((event) => {
+      const lines = event.split("\n");
+      const dataLines = lines
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart());
+      return dataLines.join("\n");
+    })
+    .filter((data) => data.length > 0);
+}
+
 describe("TransformService", () => {
   const baseRequest: ChatCompletionRequest = {
     model: "gemini-3-flash",
@@ -70,6 +99,29 @@ describe("TransformService", () => {
   it("builds the Antigravity request with tokens and request ID", async () => {
     let captured: AntigravityRequest | null = null;
     let capturedStream: boolean | null = null;
+    const upstreamPayload =
+      "data: " +
+      JSON.stringify({
+        response: {
+          model: "gemini-3-flash",
+          candidates: [
+            {
+              content: {
+                role: "model",
+                parts: [{ text: "Hello" }],
+              },
+              finishReason: "STOP",
+            },
+          ],
+        },
+      }) +
+      "\n\n";
+    const upstreamStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(upstreamPayload));
+        controller.close();
+      },
+    });
 
     const service = createTransformService({
       tokenStore: {
@@ -81,7 +133,7 @@ describe("TransformService", () => {
       requester: async (request, options) => {
         captured = request;
         capturedStream = options.stream;
-        return { ok: true, value: { id: "response-1" } };
+        return { ok: true, value: new Response(upstreamStream) };
       },
       requestIdFactory: () => "req-123",
     });
@@ -92,9 +144,33 @@ describe("TransformService", () => {
     });
 
     expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.value).toEqual({ id: "response-1" });
+    if (!result.ok) {
+      return;
     }
+
+    expect(result.value).toBeInstanceOf(ReadableStream);
+    const output = await readStream(result.value as ReadableStream<Uint8Array>);
+    const events = parseSseEvents(output);
+    expect(events).toHaveLength(2);
+    const first = JSON.parse(events[0]) as {
+      id: string;
+      object: string;
+      created: number;
+      model: string;
+      choices: Array<{
+        index: number;
+        delta: { role?: string; content?: string };
+        finish_reason: string | null;
+      }>;
+    };
+    expect(first.id).toBe("chatcmpl-req-123");
+    expect(first.object).toBe("chat.completion.chunk");
+    expect(first.model).toBe("gemini-3-flash");
+    expect(typeof first.created).toBe("number");
+    expect(first.choices[0].delta.role).toBe("assistant");
+    expect(first.choices[0].delta.content).toBe("Hello");
+    expect(first.choices[0].finish_reason).toBe("stop");
+    expect(events[1]).toBe("[DONE]");
 
     expect(captured?.body.project).toBe("project-id");
     expect(captured?.body.model).toBe("gemini-3-flash");
@@ -102,5 +178,32 @@ describe("TransformService", () => {
     expect(captured?.headers.Authorization).toBe("Bearer token");
     expect(captured?.headers.Accept).toBe("text/event-stream");
     expect(capturedStream).toBe(true);
+  });
+
+  it("returns UPSTREAM_ERROR when streaming response body is missing", async () => {
+    const service = createTransformService({
+      tokenStore: {
+        getAccessToken: async () => ({
+          ok: true,
+          value: { accessToken: "token", projectId: "project-id" },
+        }),
+      },
+      requester: async () => ({ ok: true, value: new Response(null) }),
+      requestIdFactory: () => "req-404",
+    });
+
+    const result = await service.handleCompletion({
+      ...baseRequest,
+      stream: true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.code).toBe("UPSTREAM_ERROR");
+    expect(result.error.statusCode).toBe(502);
+    expect(result.error.message).toBe("Upstream response body is missing.");
   });
 });

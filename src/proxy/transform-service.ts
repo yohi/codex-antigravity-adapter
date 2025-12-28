@@ -7,6 +7,8 @@ import {
   type TransformError as RequestTransformError,
   type TransformResult as RequestTransformResult,
 } from "../transformer/request";
+import { SESSION_ID } from "../transformer/helpers";
+import { transformStream } from "../transformer/response";
 import type { ChatCompletionRequest } from "../transformer/schema";
 
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
@@ -69,6 +71,7 @@ export function createTransformService(
         return { ok: false, error: mapTokenError(tokensResult.error) };
       }
 
+      const stream = Boolean(request.stream);
       const requestId = requestIdFactory();
       const transformResult = createAntigravityRequest(
         request,
@@ -80,9 +83,39 @@ export function createTransformService(
       }
 
       try {
-        return await options.requester(transformResult.value, {
-          stream: Boolean(request.stream),
+        const upstream = await options.requester(transformResult.value, {
+          stream,
         });
+        if (!upstream.ok) {
+          return upstream;
+        }
+        if (!stream) {
+          return upstream;
+        }
+        if (!(upstream.value instanceof Response)) {
+          return {
+            ok: false,
+            error: {
+              code: "UPSTREAM_ERROR",
+              statusCode: 502,
+              message: "Upstream response is invalid.",
+            },
+          };
+        }
+        if (!upstream.value.body) {
+          return {
+            ok: false,
+            error: {
+              code: "UPSTREAM_ERROR",
+              statusCode: 502,
+              message: "Upstream response body is missing.",
+            },
+          };
+        }
+        return {
+          ok: true,
+          value: transformStream(upstream.value.body, requestId, SESSION_ID),
+        };
       } catch (error) {
         return {
           ok: false,
