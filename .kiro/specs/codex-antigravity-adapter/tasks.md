@@ -138,7 +138,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - レスポンス ID とタイムスタンプの生成
   - _Requirements: 4.3, 4.4_
 
-- [ ] 5.2 ツール関連のレスポンス変換
+- [x] 5.2 ツール関連のレスポンス変換
   - `functionCall` → `tool_calls` への変換
   - `tool_calls` の構造化（id, type, function.name, function.arguments）
   - `function.arguments` の JSON 文字列化

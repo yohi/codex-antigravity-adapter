@@ -10,8 +10,14 @@ export type TransformResult<T> =
 
 export type AntigravityContentPart = {
   text?: string;
-  functionCall?: Record<string, unknown>;
+  functionCall?: AntigravityFunctionCall;
   functionResponse?: Record<string, unknown>;
+};
+
+export type AntigravityFunctionCall = {
+  id?: unknown;
+  name?: unknown;
+  args?: unknown;
 };
 
 export type AntigravityContent = {
@@ -47,6 +53,14 @@ export type ChatCompletionResponse = {
     message: {
       role: "assistant";
       content: string | null;
+      tool_calls?: Array<{
+        id: string;
+        type: "function";
+        function: {
+          name: string;
+          arguments: string;
+        };
+      }>;
     };
     finish_reason: "stop" | "length" | null;
   }>;
@@ -90,19 +104,23 @@ export function transformSingle(
       );
     }
 
-    const textResult = extractText(content.parts);
-    if (!textResult.ok) {
-      return textResult;
-    }
-
     const choiceIndex =
       typeof candidate.index === "number" ? candidate.index : index;
+    const partsResult = extractMessageParts(content.parts);
+    if (!partsResult.ok) {
+      return partsResult;
+    }
+    const message: ChatCompletionResponse["choices"][number]["message"] = {
+      role: "assistant",
+      content: partsResult.value.content,
+    };
+    if (partsResult.value.tool_calls) {
+      message.tool_calls = partsResult.value.tool_calls;
+    }
+
     choices.push({
       index: choiceIndex,
-      message: {
-        role: "assistant",
-        content: textResult.value,
-      },
+      message,
       finish_reason: mapFinishReason(candidate.finishReason),
     });
   }
@@ -130,13 +148,72 @@ export function transformSingle(
   return { ok: true, value: result };
 }
 
-function extractText(
+type ToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+type ExtractedMessage = {
+  content: string | null;
+  tool_calls?: ToolCall[];
+};
+
+function extractMessageParts(
   parts: AntigravityContentPart[]
-): TransformResult<string> {
+): TransformResult<ExtractedMessage> {
   const texts: string[] = [];
+  const toolCalls: ToolCall[] = [];
+  let toolCallIndex = 0;
+
   for (const part of parts) {
     if (part && typeof part.text === "string") {
       texts.push(part.text);
+      continue;
+    }
+    if (part && part.functionCall && typeof part.functionCall === "object") {
+      const call = part.functionCall;
+      const name = call.name;
+      if (typeof name !== "string" || name.length === 0) {
+        return invalidMessage(
+          "candidates.content.parts.functionCall.name",
+          "Function call name is missing."
+        );
+      }
+      let args = call.args;
+      if (args === undefined) {
+        args = {};
+      }
+      if (!args || typeof args !== "object" || Array.isArray(args)) {
+        return invalidMessage(
+          "candidates.content.parts.functionCall.args",
+          "Function call args must be an object."
+        );
+      }
+      let argumentsJson: string;
+      try {
+        argumentsJson = JSON.stringify(args);
+      } catch {
+        return invalidMessage(
+          "candidates.content.parts.functionCall.args",
+          "Function call args must be JSON serializable."
+        );
+      }
+      const id =
+        typeof call.id === "string" && call.id.length > 0
+          ? call.id
+          : `call_${++toolCallIndex}`;
+      toolCalls.push({
+        id,
+        type: "function",
+        function: {
+          name,
+          arguments: argumentsJson,
+        },
+      });
       continue;
     }
     return unsupportedFeature(
@@ -144,13 +221,23 @@ function extractText(
       "Non-text content is not supported yet."
     );
   }
-  if (texts.length === 0) {
+  if (texts.length === 0 && toolCalls.length === 0) {
     return invalidMessage(
       "candidates.content.parts",
-      "Candidate content must include text."
+      "Candidate content must include text or tool calls."
     );
   }
-  return { ok: true, value: texts.join("") };
+  const content = texts.length > 0 ? texts.join("") : null;
+  if (toolCalls.length === 0) {
+    return { ok: true, value: { content } };
+  }
+  return {
+    ok: true,
+    value: {
+      content,
+      tool_calls: toolCalls,
+    },
+  };
 }
 
 function mapFinishReason(
