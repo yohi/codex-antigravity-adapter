@@ -145,21 +145,55 @@ function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
   return typeof ReadableStream !== "undefined" && value instanceof ReadableStream;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isProxyError(value: unknown): value is ProxyError {
+  if (!isRecord(value)) return false;
+  if (typeof value.message !== "string") return false;
+  if (typeof value.statusCode !== "number") return false;
+  if (typeof value.code !== "string") return false;
+  return (
+    value.code === "UNAUTHORIZED" ||
+    value.code === "TRANSFORM_ERROR" ||
+    value.code === "UPSTREAM_ERROR" ||
+    value.code === "NETWORK_ERROR"
+  );
+}
+
 function normalizeTransformResult(
   result:
     | unknown
     | { ok: true; value: unknown }
     | { ok: false; error: ProxyError }
 ): { ok: true; value: unknown } | { ok: false; error: ProxyError } {
-  if (
-    typeof result === "object" &&
-    result !== null &&
-    "ok" in result &&
-    typeof (result as { ok?: unknown }).ok === "boolean"
-  ) {
-    return result as
-      | { ok: true; value: unknown }
-      | { ok: false; error: { statusCode: number; message: string } };
+  if (isRecord(result) && "ok" in result && typeof result.ok === "boolean") {
+    if (result.ok === true && "value" in result) {
+      return { ok: true, value: (result as { value: unknown }).value };
+    }
+
+    if (result.ok === false && "error" in result) {
+      const error = (result as { error: unknown }).error;
+      if (isProxyError(error)) {
+        return { ok: false, error };
+      }
+      if (
+        isRecord(error) &&
+        typeof error.statusCode === "number" &&
+        typeof error.message === "string"
+      ) {
+        return {
+          ok: false,
+          error: {
+            code: "UPSTREAM_ERROR",
+            statusCode: error.statusCode,
+            message: error.message,
+            upstream: error,
+          },
+        };
+      }
+    }
   }
   return { ok: true, value: result };
 }
