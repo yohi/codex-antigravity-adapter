@@ -1,3 +1,8 @@
+import {
+  ANTIGRAVITY_API_CLIENT,
+  ANTIGRAVITY_CLIENT_METADATA,
+  ANTIGRAVITY_USER_AGENT,
+} from "../config/antigravity";
 import type { ChatCompletionRequest } from "./schema";
 import {
   DEFAULT_SIGNATURE_CACHE,
@@ -58,6 +63,19 @@ export type AntigravityRequestPayload = {
     sessionId?: string;
   };
   extraHeaders?: Record<string, string>;
+};
+
+export type AntigravityRequestEnvelope = {
+  project: string;
+  model: string;
+  request: AntigravityRequestPayload["request"];
+  userAgent: string;
+  requestId: string;
+};
+
+export type AntigravityRequest = {
+  body: AntigravityRequestEnvelope;
+  headers: Record<string, string>;
 };
 
 export function transformRequestBasics(
@@ -266,6 +284,46 @@ export function transformRequestBasics(
   }
 
   return { ok: true, value: payload };
+}
+
+export type AntigravityRequestOptions = {
+  accessToken: string;
+  projectId: string;
+  requestId: string;
+  stream?: boolean;
+};
+
+export function buildAntigravityRequest(
+  payload: AntigravityRequestPayload,
+  options: AntigravityRequestOptions
+): AntigravityRequest {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${options.accessToken}`,
+    "User-Agent": ANTIGRAVITY_USER_AGENT,
+    "X-Goog-Api-Client": ANTIGRAVITY_API_CLIENT,
+    "Client-Metadata": ANTIGRAVITY_CLIENT_METADATA,
+  };
+
+  if (payload.extraHeaders) {
+    for (const [key, value] of Object.entries(payload.extraHeaders)) {
+      headers[key] = value;
+    }
+  }
+
+  if (options.stream) {
+    headers.Accept = "text/event-stream";
+  }
+
+  return {
+    body: {
+      project: options.projectId,
+      model: payload.model,
+      request: payload.request,
+      userAgent: "antigravity",
+      requestId: options.requestId,
+    },
+    headers,
+  };
 }
 
 export type TransformRequestOptions = {

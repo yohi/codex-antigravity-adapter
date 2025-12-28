@@ -1,7 +1,15 @@
 import { describe, expect, it } from "bun:test";
 
+import {
+  ANTIGRAVITY_API_CLIENT,
+  ANTIGRAVITY_CLIENT_METADATA,
+  ANTIGRAVITY_USER_AGENT,
+} from "../src/config/antigravity";
 import { SignatureCache, hashThinkingText } from "../src/transformer/helpers";
-import { transformRequestBasics } from "../src/transformer/request";
+import {
+  buildAntigravityRequest,
+  transformRequestBasics,
+} from "../src/transformer/request";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 
 describe("transformRequestBasics", () => {
@@ -495,5 +503,65 @@ describe("transformRequestBasics", () => {
     }
 
     expect(result.error.code).toBe("SIGNATURE_CACHE_MISS");
+  });
+});
+
+describe("buildAntigravityRequest", () => {
+  it("wraps the payload in an Antigravity envelope and base headers", () => {
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-flash",
+      messages: [{ role: "user", content: "Hello" }],
+    };
+
+    const payloadResult = transformRequestBasics(request);
+    expect(payloadResult.ok).toBe(true);
+    if (!payloadResult.ok) {
+      return;
+    }
+
+    const result = buildAntigravityRequest(payloadResult.value, {
+      accessToken: "token-1",
+      projectId: "project-1",
+      requestId: "req-1",
+    });
+
+    expect(result.body).toEqual({
+      project: "project-1",
+      model: payloadResult.value.model,
+      request: payloadResult.value.request,
+      userAgent: "antigravity",
+      requestId: "req-1",
+    });
+    expect(result.headers).toEqual({
+      Authorization: "Bearer token-1",
+      "User-Agent": ANTIGRAVITY_USER_AGENT,
+      "X-Goog-Api-Client": ANTIGRAVITY_API_CLIENT,
+      "Client-Metadata": ANTIGRAVITY_CLIENT_METADATA,
+    });
+  });
+
+  it("adds streaming and Claude thinking headers when needed", () => {
+    const request: ChatCompletionRequest = {
+      model: "claude-sonnet-4-5-thinking",
+      messages: [{ role: "user", content: "Hello" }],
+    };
+
+    const payloadResult = transformRequestBasics(request);
+    expect(payloadResult.ok).toBe(true);
+    if (!payloadResult.ok) {
+      return;
+    }
+
+    const result = buildAntigravityRequest(payloadResult.value, {
+      accessToken: "token-2",
+      projectId: "project-2",
+      requestId: "req-2",
+      stream: true,
+    });
+
+    expect(result.headers["anthropic-beta"]).toBe(
+      "interleaved-thinking-2025-05-14"
+    );
+    expect(result.headers.Accept).toBe("text/event-stream");
   });
 });
