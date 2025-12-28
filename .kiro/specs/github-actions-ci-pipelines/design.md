@@ -76,7 +76,7 @@ graph LR
 
 **対応策**:
 - Lint / TypeCheck / Test / Build を並列ジョブとして実行（依存関係なし）
-- 依存関係キャッシュを有効化（`oven-sh/setup-bun@v2` の `cache: true`）
+- 依存関係キャッシュを有効化（`actions/cache@v4` で `~/.bun/install/cache` をキャッシュ）
 - 推定ステップ時間:
   - Checkout: ~10秒
   - Setup Bun: ~15秒
@@ -100,16 +100,13 @@ sequenceDiagram
     CI->>CI: Checkout code
     CI->>CI: Setup Bun
     CI->>CI: bun install --frozen-lockfile
-    alt Lint job
+    par Lint job
         CI->>CI: bun run lint
-    end
-    alt Type Check job
+    and Type Check job
         CI->>CI: bun run check-types
-    end
-    alt Test job
+    and Test job
         CI->>CI: bun run test
-    end
-    alt Build job
+    and Build job
         CI->>CI: bun run build
     end
     CI-->>GH: Report status (pass/fail)
@@ -119,7 +116,7 @@ sequenceDiagram
 **Key Decisions**:
 - Lint / TypeCheck / Test / Build は並列ジョブとして実行（依存関係なし）
 - 各ジョブ失敗時はワークフロー全体が失敗ステータスになる
-- ubuntu-slim ランナーの 15 分タイムアウト制約に対応するため、並列実行とキャッシュ（`cache: true`）を活用
+- ubuntu-slim ランナーの 15 分タイムアウト制約に対応するため、並列実行と依存関係キャッシュ（`actions/cache@v4` で `~/.bun/install/cache` をキャッシュ）を活用
 - 推定合計実行時間 ~3 分（Checkout ~10s, Setup Bun ~15s, Install ~30s, 並列ジョブ ~120s）
 
 ## Requirements Traceability
@@ -182,7 +179,10 @@ sequenceDiagram
 **Implementation Notes**
 - `bun-version-file: "package.json"` で engines.bun を参照
 - `bun install --frozen-lockfile` で再現性を保証
-- `oven-sh/setup-bun@v2` の `cache: true` を有効化して依存関係キャッシュを利用
+- 依存関係キャッシュは `actions/cache@v4` を使用して実装:
+  - キャッシュキー: `${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}`
+  - キャッシュパス: `~/.bun/install/cache`
+  - リストアキー: `${{ runner.os }}-bun-` でパーシャルマッチを許可
 - **実装後の検証**: テスト PR で実際の実行時間を測定し、15 分タイムアウト以内に安定して完了することを確認する。推定時間（~3 分）を大幅に超える場合は、並列実行の最適化やキャッシュ設定の見直しを実施する
 
 #### Lint Job
