@@ -129,7 +129,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - _Requirements: 4.1, 4.2_
 
 - [ ] 5. レスポンス変換の実装
-- [ ] 5.1 基本的な Gemini → OpenAI 変換の実装
+- [x] 5.1 基本的な Gemini → OpenAI 変換の実装
   - `candidates[].content.parts[]` → `choices[].message` への変換
   - `role: "model"` → `role: "assistant"` への変換
   - テキストコンテンツの結合処理
