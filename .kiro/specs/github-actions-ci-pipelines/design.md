@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Purpose**: Pull Request 作成時および `main` ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する GitHub Actions CI パイプラインを構築する。
+**Purpose**: Pull Request 作成時および `master` ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する GitHub Actions CI パイプラインを構築する。
 
 **Users**: リポジトリ開発者・コントリビュータは、コード変更時に品質チェックの自動フィードバックを受け取る。
 
@@ -70,6 +70,22 @@ graph LR
 | Type Check | tsc --noEmit | 型チェック | 新規スクリプト追加 |
 | Linter | @biomejs/biome@latest | Lint + Format | 新規導入 |
 
+### CI Execution Flow
+
+**Job Timeout**: GitHub Actions の ubuntu-slim ランナーはジョブごとに 15 分のタイムアウトが適用される。
+
+**対応策**:
+- Lint / TypeCheck / Test / Build を並列ジョブとして実行（依存関係なし）
+- 依存関係キャッシュを有効化（`oven-sh/setup-bun@v2` の `cache: true`）
+- 推定ステップ時間:
+  - Checkout: ~10秒
+  - Setup Bun: ~15秒
+  - Install（キャッシュ有効時）: ~30秒
+  - 並列ジョブ（Lint/TypeCheck/Test/Build）: ~120秒
+  - **合計推定時間: ~3分**
+
+このタイムアウト制約により、並列実行とキャッシュを活用して効率的なパイプラインを構築する。
+
 ## System Flows
 
 ### CI 実行フロー
@@ -101,8 +117,10 @@ sequenceDiagram
 ```
 
 **Key Decisions**:
-- Lint / TypeCheck / Test / Build は並列ジョブとして実行可能（依存関係なし）
+- Lint / TypeCheck / Test / Build は並列ジョブとして実行（依存関係なし）
 - 各ジョブ失敗時はワークフロー全体が失敗ステータスになる
+- ubuntu-slim ランナーの 15 分タイムアウト制約に対応するため、並列実行とキャッシュ（`cache: true`）を活用
+- 推定合計実行時間 ~3 分（Checkout ~10s, Setup Bun ~15s, Install ~30s, 並列ジョブ ~120s）
 
 ## Requirements Traceability
 
@@ -164,6 +182,8 @@ sequenceDiagram
 **Implementation Notes**
 - `bun-version-file: "package.json"` で engines.bun を参照
 - `bun install --frozen-lockfile` で再現性を保証
+- `oven-sh/setup-bun@v2` の `cache: true` を有効化して依存関係キャッシュを利用
+- **実装後の検証**: テスト PR で実際の実行時間を測定し、15 分タイムアウト以内に安定して完了することを確認する。推定時間（~3 分）を大幅に超える場合は、並列実行の最適化やキャッシュ設定の見直しを実施する
 
 #### Lint Job
 

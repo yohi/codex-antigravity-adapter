@@ -2,12 +2,12 @@
 
 ## Project Description
 
-GitHub Actions を導入し、Pull Request 作成時および main ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する CI パイプラインを構築する。
+GitHub Actions を導入し、Pull Request 作成時および master ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する CI パイプラインを構築する。
 
 ## Introduction
 
 この仕様は、`codex-antigravity-adapter` リポジトリにおいて、変更の品質を継続的に検証するための GitHub Actions ベースの CI パイプライン要件を定義する。  
-CI は Pull Request と `main` ブランチへの Push を契機に、ユニットテスト・ビルド・型チェック・Lint を自動で実行し、結果を GitHub 上で判別可能な形で報告する。
+CI は Pull Request と `master` ブランチへの Push を契機に、ユニットテスト・ビルド・型チェック・Lint を自動で実行し、結果は GitHub 上で判別可能な形で報告する。
 
 ## Requirements
 
