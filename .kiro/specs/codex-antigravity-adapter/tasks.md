@@ -144,7 +144,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - `function.arguments` の JSON 文字列化
   - _Requirements: 4.3, 4.4_
 
-- [ ] 5.3 SSE ストリーミング変換の実装
+- [x] 5.3 SSE ストリーミング変換の実装
   - Antigravity SSE ストリーム（`data: { "response": ... }` 形式）のパース
   - OpenAI 互換 SSE チャンク（`ChatCompletionChunk`）への逐次変換
   - `delta` オブジェクトの構築（role, content, tool_calls の増分）
