@@ -75,7 +75,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - TransformService への処理委譲
   - _Requirements: 1.1, 1.3, 1.4, 3.1, 3.2_
 
-- [ ] 4. リクエスト変換の実装
+- [x] 4. リクエスト変換の実装
 - [x] 4.1 基本的な OpenAI → Gemini 変換の実装
   - `messages` → `contents` スキーマへの変換
   - `system` ロール → `systemInstruction` への変換
@@ -128,7 +128,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - ストリーミング時の `Accept: text/event-stream` ヘッダー付加
   - _Requirements: 4.1, 4.2_
 
-- [ ] 5. レスポンス変換の実装
+- [x] 5. レスポンス変換の実装
 - [x] 5.1 基本的な Gemini → OpenAI 変換の実装
   - `candidates[].content.parts[]` → `choices[].message` への変換
   - `role: "model"` → `role: "assistant"` への変換
@@ -210,7 +210,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - OpenAI 互換エラーオブジェクトの構築
   - _Requirements: 1.4, 2.4, 2.5, 3.2, 3.5, 4.4_
 
-- [ ] 8. テストの実装
+- [x] 8. テストの実装
 - [x] 8.1 ユニットテストの作成
   - RequestTransformer のテスト（messages 変換、tool 変換、thinking 互換、署名処理、スキーマサニタイズ）
   - ResponseTransformer のテスト（candidates 変換、functionCall 変換、署名保存、SSE チャンク生成）
@@ -230,7 +230,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - _Requirements: 全要件の統合レベル検証_
 
 - [ ] 9. 統合とエンドツーエンドの検証
-- [ ] 9.1 コンポーネント統合の検証
+- [x] 9.1 コンポーネント統合の検証
   - Auth Domain と Proxy Domain の連携確認
   - TokenStore と TransformService の統合確認
   - RequestTransformer と ResponseTransformer の連携確認
