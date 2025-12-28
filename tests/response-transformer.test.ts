@@ -5,6 +5,7 @@ import {
   transformStream,
   type AntigravityResponse,
 } from "../src/transformer/response";
+import { SignatureCache, hashThinkingText } from "../src/transformer/helpers";
 
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -171,6 +172,96 @@ describe("transformSingle", () => {
       ],
     });
   });
+
+  it("stores signed thinking blocks in the signature cache", () => {
+    const cache = new SignatureCache({ now: () => 0 });
+    const sessionId = "session-cache";
+    const signatureBlock = {
+      type: "thinking",
+      thinking: "Plan",
+      signature: "sig-1",
+    };
+    const response: AntigravityResponse = {
+      model: "gemini-3-flash",
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [{ text: "Hello" }, signatureBlock],
+          },
+          finishReason: "STOP",
+        },
+      ],
+    };
+
+    const result = transformSingle(response, "req-cache-1", sessionId, {
+      now: () => 1_700_000_000_000,
+      signatureCache: cache,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const entry = cache.get(sessionId, hashThinkingText("Plan"));
+    expect(entry?.signature).toEqual(signatureBlock);
+  });
+
+  it("prunes expired signature cache entries when saving new blocks", () => {
+    let now = 0;
+    class TrackingCache extends SignatureCache {
+      pruneCalls = 0;
+
+      pruneExpired(): void {
+        this.pruneCalls += 1;
+        super.pruneExpired();
+      }
+    }
+
+    const cache = new TrackingCache({
+      ttlMs: 1000,
+      now: () => now,
+    });
+    const sessionId = "session-prune";
+    cache.set({
+      sessionId,
+      textHash: hashThinkingText("Old"),
+      signature: { type: "thinking", thinking: "Old", signature: "sig-old" },
+    });
+
+    now = 2000;
+
+    const response: AntigravityResponse = {
+      model: "gemini-3-flash",
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [
+              {
+                thought: true,
+                thoughtSignature: "sig-new",
+                thinking: "New",
+              },
+              { text: "OK" },
+            ],
+          },
+          finishReason: "STOP",
+        },
+      ],
+    };
+
+    const result = transformSingle(response, "req-cache-2", sessionId, {
+      now: () => 1_700_000_002_000,
+      signatureCache: cache,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(cache.pruneCalls).toBeGreaterThan(0);
+  });
 });
 
 describe("transformStream", () => {
@@ -333,5 +424,59 @@ describe("transformStream", () => {
       },
     });
     expect(events[1]).toBe("[DONE]");
+  });
+
+  it("captures thinking blocks from streaming responses without emitting them", async () => {
+    const cache = new SignatureCache({ now: () => 0 });
+    const sessionId = "session-stream-cache";
+    const upstream = [
+      "data: " +
+        JSON.stringify({
+          response: {
+            model: "gemini-3-flash",
+            candidates: [
+              {
+                content: {
+                  role: "model",
+                  parts: [
+                    {
+                      thought: true,
+                      thoughtSignature: "sig-stream",
+                      thinking: "Plan",
+                    },
+                    { text: "Hello" },
+                  ],
+                },
+                finishReason: "STOP",
+              },
+            ],
+          },
+        }) +
+        "\n\n",
+    ].join("");
+
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(upstream));
+        controller.close();
+      },
+    });
+
+    const output = await readStream(
+      transformStream(stream, "req-stream-4", sessionId, {
+        now: () => 1_700_000_000_000,
+        signatureCache: cache,
+      })
+    );
+    const events = parseSseEvents(output);
+
+    expect(events).toHaveLength(2);
+    expect(JSON.parse(events[0]).choices[0].delta.content).toBe("Hello");
+    const entry = cache.get(sessionId, hashThinkingText("Plan"));
+    expect(entry?.signature).toEqual({
+      thought: true,
+      thoughtSignature: "sig-stream",
+      thinking: "Plan",
+    });
   });
 });

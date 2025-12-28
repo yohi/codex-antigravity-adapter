@@ -82,6 +82,14 @@ export class SignatureCache {
     return null;
   }
 
+  pruneExpired(): void {
+    for (const [key, entry] of this.cache.entries()) {
+      if (this.isExpired(entry)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
   private isExpired(entry: SignatureCacheEntry): boolean {
     return entry.expiresAt <= this.now();
   }
@@ -106,6 +114,9 @@ export function isThinkingBlock(value: unknown): value is SignatureBlock {
     return false;
   }
   const record = value as Record<string, unknown>;
+  if (record.thought === true) {
+    return true;
+  }
   const type = typeof record.type === "string" ? record.type : null;
   if (type && (type === "thinking" || type === "redacted_thinking" || type === "reasoning")) {
     return true;

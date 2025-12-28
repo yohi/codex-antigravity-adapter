@@ -153,7 +153,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - エラーチャンクのハンドリングと OpenAI 互換エラー形式への変換
   - _Requirements: 3.4, 4.3_
 
-- [ ] 5.4 署名付き thinking ブロックの検出と保存
+- [x] 5.4 署名付き thinking ブロックの検出と保存
   - レスポンス内の思考ブロック検出（`thought: true` / `type: "thinking"` / `signature` / `thoughtSignature`）
   - thinking テキストの SHA-256 ハッシュ算出
   - 署名キャッシュへの保存（`sessionId + textHash` をキーとして）

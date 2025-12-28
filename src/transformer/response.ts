@@ -1,3 +1,12 @@
+import {
+  DEFAULT_SIGNATURE_CACHE,
+  SignatureCache,
+  SignatureBlock,
+  getThinkingText,
+  hashThinkingText,
+  isThinkingBlock,
+} from "./helpers";
+
 export type TransformError = {
   code: "INVALID_MESSAGE_FORMAT" | "UNSUPPORTED_FEATURE" | "SIGNATURE_CACHE_MISS";
   message: string;
@@ -8,11 +17,13 @@ export type TransformResult<T> =
   | { ok: true; value: T }
   | { ok: false; error: TransformError };
 
-export type AntigravityContentPart = {
-  text?: string;
-  functionCall?: AntigravityFunctionCall;
-  functionResponse?: Record<string, unknown>;
-};
+export type AntigravityContentPart =
+  | SignatureBlock
+  | {
+      text?: string;
+      functionCall?: AntigravityFunctionCall;
+      functionResponse?: Record<string, unknown>;
+    };
 
 export type AntigravityFunctionCall = {
   id?: unknown;
@@ -73,10 +84,14 @@ export type ChatCompletionResponse = {
 
 export type TransformResponseOptions = {
   now?: () => number;
+  signatureCache?: SignatureCache;
+  sessionId?: string;
 };
 
 export type TransformStreamOptions = {
   now?: () => number;
+  signatureCache?: SignatureCache;
+  sessionId?: string;
 };
 
 export type ChatCompletionChunk = {
@@ -109,7 +124,8 @@ export function transformSingle(
   sessionId: string,
   options: TransformResponseOptions = {}
 ): TransformResult<ChatCompletionResponse> {
-  void sessionId;
+  const signatureCache = options.signatureCache ?? DEFAULT_SIGNATURE_CACHE;
+  const resolvedSessionId = options.sessionId ?? sessionId;
   const candidates = response.candidates;
   if (!candidates || candidates.length === 0) {
     return invalidMessage("candidates", "Response candidates are missing.");
@@ -134,7 +150,11 @@ export function transformSingle(
 
     const choiceIndex =
       typeof candidate.index === "number" ? candidate.index : index;
-    const partsResult = extractMessageParts(content.parts);
+    const partsResult = extractMessageParts(
+      content.parts,
+      signatureCache,
+      resolvedSessionId
+    );
     if (!partsResult.ok) {
       return partsResult;
     }
@@ -182,7 +202,8 @@ export function transformStream(
   sessionId: string,
   options: TransformStreamOptions = {}
 ): ReadableStream<Uint8Array> {
-  void sessionId;
+  const signatureCache = options.signatureCache ?? DEFAULT_SIGNATURE_CACHE;
+  const resolvedSessionId = options.sessionId ?? sessionId;
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const now = options.now ?? (() => Date.now());
@@ -260,7 +281,9 @@ export function transformStream(
       currentModel,
       Math.floor(now() / 1000),
       roleEmitted,
-      toolCallIndexByChoice
+      toolCallIndexByChoice,
+      signatureCache,
+      resolvedSessionId
     );
 
     if (!chunkResult.ok) {
@@ -334,13 +357,19 @@ type ExtractedMessage = {
 };
 
 function extractMessageParts(
-  parts: AntigravityContentPart[]
+  parts: AntigravityContentPart[],
+  signatureCache: SignatureCache,
+  sessionId: string
 ): TransformResult<ExtractedMessage> {
   const texts: string[] = [];
   const toolCalls: ToolCall[] = [];
   let toolCallIndex = 0;
 
   for (const part of parts) {
+    if (isThinkingBlock(part)) {
+      storeThinkingBlock(signatureCache, sessionId, part);
+      continue;
+    }
     if (part && typeof part.text === "string") {
       texts.push(part.text);
       continue;
@@ -428,12 +457,20 @@ type DeltaParts = {
 
 function extractDeltaParts(
   parts: AntigravityContentPart[],
-  nextToolIndex: () => number
+  nextToolIndex: () => number,
+  signatureCache: SignatureCache,
+  sessionId: string
 ): TransformResult<DeltaParts> {
   const texts: string[] = [];
   const toolCalls: ToolCallDelta[] = [];
+  let sawThinking = false;
 
   for (const part of parts) {
+    if (isThinkingBlock(part)) {
+      sawThinking = true;
+      storeThinkingBlock(signatureCache, sessionId, part);
+      continue;
+    }
     if (part && typeof part.text === "string") {
       texts.push(part.text);
       continue;
@@ -489,6 +526,9 @@ function extractDeltaParts(
   }
 
   if (texts.length === 0 && toolCalls.length === 0) {
+    if (sawThinking) {
+      return { ok: true, value: {} };
+    }
     return invalidMessage(
       "candidates.content.parts",
       "Candidate content must include text or tool calls."
@@ -505,13 +545,25 @@ function extractDeltaParts(
   return { ok: true, value: delta };
 }
 
+function storeThinkingBlock(
+  signatureCache: SignatureCache,
+  sessionId: string,
+  block: SignatureBlock
+) {
+  signatureCache.pruneExpired();
+  const textHash = hashThinkingText(getThinkingText(block));
+  signatureCache.set({ sessionId, textHash, signature: block });
+}
+
 function buildChunkFromResponse(
   response: AntigravityResponse,
   requestId: string,
   model: string,
   created: number,
   roleEmitted: Set<number>,
-  toolCallIndexByChoice: Map<number, number>
+  toolCallIndexByChoice: Map<number, number>,
+  signatureCache: SignatureCache,
+  sessionId: string
 ): TransformResult<ChatCompletionChunk> {
   const candidates = response.candidates;
   if (!candidates || candidates.length === 0) {
@@ -542,7 +594,12 @@ function buildChunkFromResponse(
       toolCallIndexByChoice.set(choiceIndex, current + 1);
       return current;
     };
-    const deltaResult = extractDeltaParts(content.parts, nextToolIndex);
+    const deltaResult = extractDeltaParts(
+      content.parts,
+      nextToolIndex,
+      signatureCache,
+      sessionId
+    );
     if (!deltaResult.ok) {
       return deltaResult;
     }
