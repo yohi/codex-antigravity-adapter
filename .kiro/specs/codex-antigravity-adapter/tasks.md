@@ -169,7 +169,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - 変換エラー時のエラーレスポンス生成
   - _Requirements: 2.5, 3.3, 4.4_
 
-- [ ] 6.2 Antigravity API との通信実装
+- [x] 6.2 Antigravity API との通信実装
   - エンドポイント URL の構築（`daily → autopush → prod` のフォールバック）
   - ストリーミング時のエンドポイント（`:streamGenerateContent?alt=sse`）
   - 非ストリーミング時のエンドポイント（`:generateContent`）

@@ -70,7 +70,10 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     );
     if (!result.ok) {
       const status = result.error.statusCode || 500;
-      const mapped = mapProxyError(result.error);
+      const mapped = resolveProxyErrorMapping(result.error);
+      const headers = result.error.retryAfter
+        ? { "Retry-After": result.error.retryAfter }
+        : undefined;
       return c.json(
         {
           error: {
@@ -79,7 +82,8 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
             message: result.error.message,
           },
         },
-        status
+        status,
+        headers
       );
     }
 
@@ -224,4 +228,25 @@ function mapProxyError(error: ProxyError): { type: string; code: string } {
         code: error.statusCode >= 500 ? "internal_error" : "invalid_request",
       };
   }
+}
+
+function resolveProxyErrorMapping(error: ProxyError): { type: string; code: string } {
+  const upstream = extractUpstreamMapping(error.upstream);
+  if (upstream) {
+    return upstream;
+  }
+  return mapProxyError(error);
+}
+
+function extractUpstreamMapping(
+  upstream: ProxyError["upstream"]
+): { type: string; code: string } | null {
+  if (!upstream || typeof upstream !== "object") {
+    return null;
+  }
+  const mapped = upstream as { type?: unknown; code?: unknown };
+  if (typeof mapped.type === "string" && typeof mapped.code === "string") {
+    return { type: mapped.type, code: mapped.code };
+  }
+  return null;
 }
