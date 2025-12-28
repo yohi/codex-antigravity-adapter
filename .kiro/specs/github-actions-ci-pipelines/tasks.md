@@ -3,7 +3,7 @@
 ## Task Breakdown
 
 - [ ] 1. Biome の導入と Lint 環境のセットアップ
-- [ ] 1.1 (P) Biome を devDependencies に追加
+- [x] 1.1 (P) Biome を devDependencies に追加
   - `@biomejs/biome@latest` をインストール
   - `bun.lockb` を更新して依存関係を固定
   - _Requirements: 2.4_
