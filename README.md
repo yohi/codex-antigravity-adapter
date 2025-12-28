@@ -47,11 +47,12 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 3. **Codex CLI の設定**
    Codex CLI (または IDE 拡張) からこのアダプターを利用するには、設定ファイル `~/.codex/config.toml` を編集してカスタムモデルプロバイダーとして登録します。
 
-   #### 設定ファイルの場所
+   ### 設定ファイルの場所
    - **Linux / macOS**: `~/.codex/config.toml`
    - **Windows**: `C:\Users\<YourUsername>\.codex\config.toml`
 
-   #### モデルプロバイダーの登録と指定
+   ### モデルプロバイダーの登録と指定
+
    `~/.codex/config.toml` に以下の設定を追加します。
 
    ```toml
@@ -73,7 +74,8 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
    - `claude-sonnet-4-5-thinking`: Claude 3.5 Sonnet (Thinking 有効)
    - `claude-opus-4-5-thinking`: Claude 3 Opus (Thinking 有効)
 
-   #### プロファイルの活用（応用）
+   ### プロファイルの活用（応用）
+
    プロジェクトごとに設定を使い分けたい場合、プロファイル機能が便利です。
 
    ```toml
@@ -87,6 +89,7 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
    ```
 
    プロファイルを指定して実行する例:
+
    ```bash
    codex --profile claude "コードのリファクタリング案を出して"
    ```
@@ -97,10 +100,12 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 
 1. **サーバーの起動**
    - 開発モード（ホットリロード有効）:
+
      ```bash
      bun run dev
      ```
    - 本番相当:
+
      ```bash
      bun run start
      ```
@@ -113,15 +118,18 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 ## 開発とテスト
 
 ### テストの実行
+
 ```bash
 bun test
 ```
 
 ### E2E 検証
+
 実環境の OAuth 認証と Antigravity API を利用する E2E テストは、環境変数を指定した場合のみ実行されます。
 
 1. **事前準備**: `/login` エンドポイントなどで OAuth 認証を完了させ、トークンファイル（デフォルト: `~/.codex/antigravity-tokens.json`）が存在する状態にします。
 2. **実行**:
+
    ```bash
    RUN_E2E=1 bun test tests/e2e.test.ts
    ```
@@ -139,14 +147,17 @@ bun test
 - **Validation**: Zod
 
 ### 設計方針
+
 - **Bun-First**: `Bun.serve` を活用し、高速な起動とパフォーマンスを実現しています。
 - **標準 Web API**: 外部リクエストライブラリに依存せず、標準の `fetch`, `Request`, `Response` を使用しています。
 - **拡張性**: サーバー起動ロジック (`serve`) は注入可能になっており、Bun 以外の環境やテスト時のモック差し替えに対応しています。
 
 ### Bun 以外の環境での利用（Advanced）
+
 `src/proxy/proxy-router.ts` の `startProxyServer` に独自の `serve` 実装を渡すことで、Node.js 環境や他のランタイムでの動作も理論上可能です（現状は Bun 推奨）。
 
 ## ディレクトリ構造
+
 - `src/auth/`: OAuth 認証フロー、トークン管理
 - `src/proxy/`: OpenAI 互換 API のハンドリング、Antigravity へのリクエスト中継
 - `src/transformer/`: プロトコル変換ロジック
