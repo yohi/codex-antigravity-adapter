@@ -211,7 +211,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - _Requirements: 1.4, 2.4, 2.5, 3.2, 3.5, 4.4_
 
 - [ ] 8. テストの実装
-- [ ] 8.1 ユニットテストの作成
+- [x] 8.1 ユニットテストの作成
   - RequestTransformer のテスト（messages 変換、tool 変換、thinking 互換、署名処理、スキーマサニタイズ）
   - ResponseTransformer のテスト（candidates 変換、functionCall 変換、署名保存、SSE チャンク生成）
   - TokenStore のテスト（ファイル読み書き、atomic 書き換え、パーミッション、有効期限判定、リフレッシュロジック）
@@ -220,7 +220,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - 署名キャッシュのテスト（保存、取得、LRU エビクション、TTL 期限切れ）
   - _Requirements: 全要件のユニットレベル検証_
 
-- [ ] 8.2 統合テストの作成
+- [x] 8.2 統合テストの作成
   - OAuth フロー統合テスト（state 生成 → コールバック → HMAC/TTL 検証 → トークン保存）
   - Proxy フロー統合テスト（OpenAI リクエスト → Antigravity API モック → OpenAI レスポンス）
   - ツールフロー統合テスト（tool_calls → tool ロール → 再リクエスト → 署名注入 → 成功応答）
