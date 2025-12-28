@@ -160,7 +160,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - TTL 期限切れエントリの削除処理
   - _Requirements: 4.2, 4.3_
 
-- [ ] 6. Transform Service の統合実装
+- [x] 6. Transform Service の統合実装
 - [x] 6.1 トークン管理と API 呼び出しの統合
   - TokenStore からのアクセストークンと projectId の取得
   - トークン有効性の確認と自動リフレッシュの実行
