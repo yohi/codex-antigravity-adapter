@@ -173,11 +173,10 @@ function normalizeTransformResult(
       return { ok: true, value: (result as { value: unknown }).value };
     }
 
-    if (result.ok === false && "error" in result) {
-      const error = (result as { error: unknown }).error;
-      if (isProxyError(error)) {
-        return { ok: false, error };
-      }
+    if (result.ok === false) {
+      const error = "error" in result ? (result as { error?: unknown }).error : undefined;
+      if (isProxyError(error)) return { ok: false, error };
+
       if (
         isRecord(error) &&
         typeof error.statusCode === "number" &&
@@ -193,6 +192,17 @@ function normalizeTransformResult(
           },
         };
       }
+
+      const message = String(error);
+      return {
+        ok: false,
+        error: {
+          code: "UPSTREAM_ERROR",
+          statusCode: 502,
+          message: message ? message : "Unknown error",
+          upstream: error,
+        },
+      };
     }
   }
   return { ok: true, value: result };
