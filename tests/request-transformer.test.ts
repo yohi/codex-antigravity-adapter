@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
+import { SignatureCache, hashThinkingText } from "../src/transformer/helpers";
 import { transformRequestBasics } from "../src/transformer/request";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 
@@ -318,5 +319,181 @@ describe("transformRequestBasics", () => {
     }
 
     expect(result.error.code).toBe("INVALID_MESSAGE_FORMAT");
+  });
+
+  it("injects cached thinking blocks before tool calls for Claude thinking", () => {
+    const cache = new SignatureCache({ now: () => 0 });
+    const sessionId = "session-1";
+    const cachedBlock = {
+      type: "thinking",
+      thinking: "Plan it",
+      signature: "sig-from-cache",
+    };
+    cache.set({
+      sessionId,
+      textHash: hashThinkingText("Plan it"),
+      signature: cachedBlock,
+    });
+
+    const request = {
+      model: "claude-sonnet-4-5-thinking",
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Working..." },
+            { type: "thinking", thinking: "Plan it", signature: "sig-message" },
+          ],
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "do_work", arguments: "{}" },
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "do_work",
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    } as unknown as ChatCompletionRequest;
+
+    const result = transformRequestBasics(request, {
+      signatureCache: cache,
+      sessionId,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.request.contents).toEqual([
+      {
+        role: "model",
+        parts: [
+          { text: "Working..." },
+          cachedBlock,
+          {
+            functionCall: {
+              name: "do_work",
+              args: {},
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("falls back to the latest cache entry when no thinking hash is present", () => {
+    const cache = new SignatureCache({ now: () => 0 });
+    const sessionId = "session-2";
+    const cachedBlock = {
+      type: "thinking",
+      thinking: "Fallback",
+      signature: "sig-latest",
+    };
+    cache.set({
+      sessionId,
+      textHash: hashThinkingText("Fallback"),
+      signature: cachedBlock,
+    });
+
+    const request = {
+      model: "claude-sonnet-4-5-thinking",
+      messages: [
+        {
+          role: "assistant",
+          content: "Ready to call tool.",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "do_work", arguments: "{}" },
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "do_work",
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    } as unknown as ChatCompletionRequest;
+
+    const result = transformRequestBasics(request, {
+      signatureCache: cache,
+      sessionId,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    expect(result.value.request.contents).toEqual([
+      {
+        role: "model",
+        parts: [
+          { text: "Ready to call tool." },
+          cachedBlock,
+          {
+            functionCall: {
+              name: "do_work",
+              args: {},
+            },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("returns SIGNATURE_CACHE_MISS when cache entry is missing", () => {
+    const cache = new SignatureCache({ now: () => 0 });
+
+    const request = {
+      model: "claude-sonnet-4-5-thinking",
+      messages: [
+        {
+          role: "assistant",
+          content: "Ready to call tool.",
+          tool_calls: [
+            {
+              id: "call-1",
+              type: "function",
+              function: { name: "do_work", arguments: "{}" },
+            },
+          ],
+        },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "do_work",
+            parameters: { type: "object" },
+          },
+        },
+      ],
+    } as unknown as ChatCompletionRequest;
+
+    const result = transformRequestBasics(request, {
+      signatureCache: cache,
+      sessionId: "session-3",
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+
+    expect(result.error.code).toBe("SIGNATURE_CACHE_MISS");
   });
 });

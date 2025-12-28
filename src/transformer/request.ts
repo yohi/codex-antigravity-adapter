@@ -1,4 +1,12 @@
 import type { ChatCompletionRequest } from "./schema";
+import {
+  DEFAULT_SIGNATURE_CACHE,
+  SESSION_ID,
+  SignatureCache,
+  SignatureBlock,
+  resolveSignatureEntry,
+  stripThinkingBlocksFromMessages,
+} from "./helpers";
 
 export type TransformError = {
   code: "INVALID_MESSAGE_FORMAT" | "UNSUPPORTED_FEATURE" | "SIGNATURE_CACHE_MISS";
@@ -27,7 +35,8 @@ export type AntigravityFunctionResponsePart = {
 export type AntigravityContentPart =
   | { text: string }
   | AntigravityFunctionCallPart
-  | AntigravityFunctionResponsePart;
+  | AntigravityFunctionResponsePart
+  | SignatureBlock;
 
 export type AntigravityContent = {
   role: "user" | "model";
@@ -46,13 +55,17 @@ export type AntigravityRequestPayload = {
     };
     tools?: Array<unknown>;
     toolConfig?: Record<string, unknown>;
+    sessionId?: string;
   };
   extraHeaders?: Record<string, string>;
 };
 
 export function transformRequestBasics(
-  request: ChatCompletionRequest
+  request: ChatCompletionRequest,
+  options: TransformRequestOptions = {}
 ): TransformResult<AntigravityRequestPayload> {
+  const signatureCache = options.signatureCache ?? DEFAULT_SIGNATURE_CACHE;
+  const sessionId = options.sessionId ?? SESSION_ID;
   const contents: AntigravityContent[] = [];
   const systemParts: AntigravityContentPart[] = [];
   const toolCallNameById = new Map<string, string>();
@@ -66,21 +79,66 @@ export function transformRequestBasics(
   }
   const thinkingState = getThinkingState(request.model);
   const hasTools = Boolean(toolsResult.value.tools?.length);
+  const stripResult = thinkingState.isClaudeThinking
+    ? stripThinkingBlocksFromMessages(request.messages as unknown[])
+    : { messages: request.messages as unknown[], textHash: undefined };
+  const messages = stripResult.messages as ChatCompletionRequest["messages"];
+  const thinkingTextHash = stripResult.textHash;
+  let signatureBlock: SignatureBlock | null = null;
+  let signatureResolved = false;
 
-  for (const message of request.messages) {
+  const resolveSignatureBlock = (): TransformResult<SignatureBlock> => {
+    if (signatureResolved) {
+      if (signatureBlock) {
+        return { ok: true, value: signatureBlock };
+      }
+      return signatureCacheMiss();
+    }
+    signatureResolved = true;
+    const entry = resolveSignatureEntry(signatureCache, sessionId, thinkingTextHash);
+    if (!entry) {
+      return signatureCacheMiss();
+    }
+    signatureBlock = entry.signature;
+    return { ok: true, value: signatureBlock };
+  };
+
+  for (const message of messages) {
     switch (message.role) {
       case "system":
-        systemParts.push({ text: message.content });
+        {
+          const text = extractTextContent(message.content);
+          if (text === null) {
+            return invalidMessage("messages.content", "System content must be text.");
+          }
+          systemParts.push({ text });
+        }
         break;
       case "user":
-        contents.push({ role: "user", parts: [{ text: message.content }] });
+        {
+          const text = extractTextContent(message.content);
+          if (text === null) {
+            return invalidMessage("messages.content", "User content must be text.");
+          }
+          contents.push({ role: "user", parts: [{ text }] });
+        }
         break;
       case "assistant": {
         const parts: AntigravityContentPart[] = [];
-        if (typeof message.content === "string") {
-          parts.push({ text: message.content });
+        const assistantText = extractTextContent(message.content);
+        if (assistantText !== null) {
+          parts.push({ text: assistantText });
         }
         if (message.tool_calls) {
+          let injectedSignature = false;
+          let signatureToInject: SignatureBlock | null = null;
+          if (thinkingState.isClaudeThinking && message.tool_calls.length > 0) {
+            const signatureResult = resolveSignatureBlock();
+            if (!signatureResult.ok) {
+              return signatureResult;
+            }
+            signatureToInject = signatureResult.value;
+          }
           for (const toolCall of message.tool_calls) {
             if (!isValidToolName(toolCall.function.name)) {
               return invalidMessage(
@@ -100,6 +158,10 @@ export function transformRequestBasics(
               : toolCall.id;
             toolCallIdByOriginal.set(toolCall.id, normalizedId);
             toolCallNameById.set(normalizedId, toolCall.function.name);
+            if (signatureToInject && !injectedSignature) {
+              parts.push(signatureToInject);
+              injectedSignature = true;
+            }
             parts.push({
               functionCall: {
                 name: toolCall.function.name,
@@ -165,6 +227,7 @@ export function transformRequestBasics(
     model: mapModelToAntigravity(request.model),
     request: {
       contents,
+      sessionId,
     },
   };
 
@@ -204,6 +267,11 @@ export function transformRequestBasics(
 
   return { ok: true, value: payload };
 }
+
+export type TransformRequestOptions = {
+  signatureCache?: SignatureCache;
+  sessionId?: string;
+};
 
 function mapModelToAntigravity(model: string): string {
   return model;
@@ -399,4 +467,37 @@ function unsupportedFeature(field: string, message: string): TransformResult<nev
 
 function invalidMessage(field: string, message: string): TransformResult<never> {
   return { ok: false, error: { code: "INVALID_MESSAGE_FORMAT", message, field } };
+}
+
+function signatureCacheMiss(): TransformResult<never> {
+  return {
+    ok: false,
+    error: {
+      code: "SIGNATURE_CACHE_MISS",
+      message: "Signed thinking block not found for tool use.",
+    },
+  };
+}
+
+function extractTextContent(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    const textParts: string[] = [];
+    for (const part of content) {
+      if (!part || typeof part !== "object") {
+        continue;
+      }
+      const record = part as Record<string, unknown>;
+      if (record.type === "text" && typeof record.text === "string") {
+        textParts.push(record.text);
+      }
+    }
+    if (textParts.length === 0) {
+      return null;
+    }
+    return textParts.join("");
+  }
+  return null;
 }
