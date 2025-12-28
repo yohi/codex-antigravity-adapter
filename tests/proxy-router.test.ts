@@ -2,34 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import { createProxyApp, startProxyServer } from "../src/proxy/proxy-router";
 
-type TokenStore = {
-  getAccessToken: () => Promise<
-    | { ok: true; value: { accessToken: string; projectId: string } }
-    | { ok: false; error: { requiresReauth: boolean; message: string } }
-  >;
-};
-
 type TransformService = {
   handleCompletion: (
-    request: unknown,
-    tokens: { accessToken: string; projectId: string }
+    request: unknown
   ) => Promise<
     | { ok: true; value: unknown }
-    | { ok: false; error: { statusCode: number; message: string } }
+    | { ok: false; error: { code: string; statusCode: number; message: string } }
   >;
 };
-
-function createTokenStoreStub(
-  overrides: Partial<TokenStore> = {}
-): TokenStore {
-  return {
-    getAccessToken: async () => ({
-      ok: false,
-      error: { requiresReauth: true, message: "Missing token" },
-    }),
-    ...overrides,
-  };
-}
 
 function createTransformServiceStub(
   overrides: Partial<TransformService> = {}
@@ -46,8 +26,17 @@ function createTransformServiceStub(
 describe("Proxy router", () => {
   it("returns 401 with authentication guidance when unauthenticated", async () => {
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub(),
-      transformService: createTransformServiceStub(),
+      transformService: createTransformServiceStub({
+        handleCompletion: async () => ({
+          ok: false,
+          error: {
+            code: "UNAUTHORIZED",
+            statusCode: 401,
+            message:
+              "Authentication required. Please visit http://localhost:51121/login to sign in.",
+          },
+        }),
+      }),
     });
 
     const response = await app.request("http://localhost/v1/chat/completions", {
@@ -70,12 +59,6 @@ describe("Proxy router", () => {
 
   it("returns 400 when request validation fails", async () => {
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub({
-        getAccessToken: async () => ({
-          ok: true,
-          value: { accessToken: "token", projectId: "project-id" },
-        }),
-      }),
       transformService: createTransformServiceStub(),
     });
 
@@ -93,18 +76,10 @@ describe("Proxy router", () => {
 
   it("delegates to TransformService for valid requests", async () => {
     let captured: unknown | null = null;
-    let capturedTokens: { accessToken: string; projectId: string } | null = null;
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub({
-        getAccessToken: async () => ({
-          ok: true,
-          value: { accessToken: "token", projectId: "project-id" },
-        }),
-      }),
       transformService: createTransformServiceStub({
-        handleCompletion: async (request, tokens) => {
+        handleCompletion: async (request) => {
           captured = request;
-          capturedTokens = tokens;
           return { ok: true, value: { id: "resp-1" } };
         },
       }),
@@ -119,12 +94,10 @@ describe("Proxy router", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "resp-1" });
     expect(captured).toBeTruthy();
-    expect(capturedTokens).toEqual({ accessToken: "token", projectId: "project-id" });
   });
 
   it("returns a fixed model list from /v1/models", async () => {
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub(),
       transformService: createTransformServiceStub(),
     });
 
@@ -147,7 +120,6 @@ describe("Proxy router", () => {
 
   it("returns 404 for unknown endpoints", async () => {
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub(),
       transformService: createTransformServiceStub(),
     });
 
@@ -166,7 +138,6 @@ describe("Proxy router", () => {
 
   it("starts the proxy server on the default port", () => {
     const app = createProxyApp({
-      tokenStore: createTokenStoreStub(),
       transformService: createTransformServiceStub(),
     });
     let captured: { port: number; hostname: string } | null = null;

@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 
 import { ChatCompletionRequestSchema } from "../transformer/schema";
+import type { ProxyError, TransformService } from "./transform-service";
 
 type ServeOptions = {
   fetch: (request: Request) => Response | Promise<Response>;
@@ -14,38 +15,12 @@ export type ProxyServerOptions = {
   serve?: (options: ServeOptions) => { stop?: () => void };
 };
 
-export type ProxyTokenStore = {
-  getAccessToken: () => Promise<
-    | { ok: true; value: ProxyTokens }
-    | { ok: false; error: { requiresReauth: boolean; message: string } }
-  >;
-};
-
-export type ProxyTokens = {
-  accessToken: string;
-  projectId: string;
-};
-
-export type ProxyTransformService = {
-  handleCompletion: (
-    request: unknown,
-    tokens: ProxyTokens
-  ) => Promise<
-    | unknown
-    | { ok: true; value: unknown }
-    | { ok: false; error: { statusCode: number; message: string } }
-  >;
-};
-
 export type CreateProxyAppOptions = {
-  tokenStore: ProxyTokenStore;
-  transformService: ProxyTransformService;
+  transformService: TransformService;
 };
 
 const DEFAULT_PROXY_PORT = 3000;
 const DEFAULT_PROXY_HOSTNAME = "127.0.0.1";
-const AUTH_LOGIN_URL = "http://localhost:51121/login";
-
 const FIXED_MODEL_IDS = [
   "gemini-3-pro-high",
   "gemini-3-pro-low",
@@ -60,26 +35,6 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
   const app = new Hono();
 
   app.post("/v1/chat/completions", async (c) => {
-    const tokenResult = normalizeTokenResult(
-      await options.tokenStore.getAccessToken()
-    );
-    if (!tokenResult.ok) {
-      if (tokenResult.error.requiresReauth) {
-        return c.json(authenticationRequiredError(), 401);
-      }
-      return c.json(
-        {
-          error: {
-            type: "server_error",
-            code: "internal_error",
-            message: tokenResult.error.message || "Failed to load tokens.",
-          },
-        },
-        500
-      );
-    }
-    const tokens = tokenResult.value;
-
     let payload: unknown;
     try {
       payload = await c.req.json();
@@ -111,15 +66,16 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     }
 
     const result = normalizeTransformResult(
-      await options.transformService.handleCompletion(parsed.data, tokens)
+      await options.transformService.handleCompletion(parsed.data)
     );
     if (!result.ok) {
       const status = result.error.statusCode || 500;
+      const mapped = mapProxyError(result.error);
       return c.json(
         {
           error: {
-            type: status >= 500 ? "server_error" : "invalid_request_error",
-            code: status >= 500 ? "internal_error" : "invalid_request",
+            type: mapped.type,
+            code: mapped.code,
             message: result.error.message,
           },
         },
@@ -185,53 +141,16 @@ export function startProxyServer(app: Hono, options: ProxyServerOptions = {}) {
   return serve({ fetch: app.fetch, port, hostname });
 }
 
-function authenticationRequiredError() {
-  return {
-    error: {
-      type: "authentication_error",
-      code: "invalid_api_key",
-      message: `Authentication required. Please visit ${AUTH_LOGIN_URL} to sign in.`,
-    },
-  };
-}
-
 function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {
   return typeof ReadableStream !== "undefined" && value instanceof ReadableStream;
-}
-
-function normalizeTokenResult(
-  tokenResult:
-    | string
-    | null
-    | { ok: true; value: ProxyTokens }
-    | { ok: false; error: { requiresReauth: boolean; message: string } }
-): { ok: true; value: ProxyTokens } | { ok: false; error: { requiresReauth: boolean; message: string } } {
-  if (tokenResult === null) {
-    return {
-      ok: false,
-      error: { requiresReauth: true, message: "Token is missing" },
-    };
-  }
-  if (typeof tokenResult === "string") {
-    return {
-      ok: false,
-      error: {
-        requiresReauth: false,
-        message:
-          "Token store returned an access token without a project ID. " +
-          "Update the token store to return { ok: true, value: { accessToken, projectId } }.",
-      },
-    };
-  }
-  return tokenResult;
 }
 
 function normalizeTransformResult(
   result:
     | unknown
     | { ok: true; value: unknown }
-    | { ok: false; error: { statusCode: number; message: string } }
-): { ok: true; value: unknown } | { ok: false; error: { statusCode: number; message: string } } {
+    | { ok: false; error: ProxyError }
+): { ok: true; value: unknown } | { ok: false; error: ProxyError } {
   if (
     typeof result === "object" &&
     result !== null &&
@@ -243,4 +162,22 @@ function normalizeTransformResult(
       | { ok: false; error: { statusCode: number; message: string } };
   }
   return { ok: true, value: result };
+}
+
+function mapProxyError(error: ProxyError): { type: string; code: string } {
+  switch (error.code) {
+    case "UNAUTHORIZED":
+      return { type: "authentication_error", code: "invalid_api_key" };
+    case "UPSTREAM_ERROR":
+      return { type: "upstream_error", code: "upstream_error" };
+    case "NETWORK_ERROR":
+      return { type: "server_error", code: "internal_error" };
+    case "TRANSFORM_ERROR":
+      return { type: "invalid_request_error", code: "invalid_request" };
+    default:
+      return {
+        type: error.statusCode >= 500 ? "server_error" : "invalid_request_error",
+        code: error.statusCode >= 500 ? "internal_error" : "invalid_request",
+      };
+  }
 }

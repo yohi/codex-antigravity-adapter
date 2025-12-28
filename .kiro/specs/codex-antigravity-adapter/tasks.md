@@ -161,7 +161,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - _Requirements: 4.2, 4.3_
 
 - [ ] 6. Transform Service の統合実装
-- [ ] 6.1 トークン管理と API 呼び出しの統合
+- [x] 6.1 トークン管理と API 呼び出しの統合
   - TokenStore からのアクセストークンと projectId の取得
   - トークン有効性の確認と自動リフレッシュの実行
   - トークン不存在時の 401 エラー生成
