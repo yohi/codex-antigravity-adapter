@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import path from "node:path";
 
 import { OAuthAuthService } from "../src/auth/auth-service";
 import { createAuthApp } from "../src/auth/auth-router";
 import { InMemoryAuthSessionStore } from "../src/auth/auth-session-store";
+import { FileTokenStore } from "../src/auth/token-store";
 import type { TokenPair } from "../src/auth/token-store";
 import {
   ANTIGRAVITY_ENDPOINT_DAILY,
@@ -364,6 +367,110 @@ describe("Integration: Tool flow", () => {
         },
       ],
     });
+  });
+});
+
+describe("Integration: Auth + Proxy domains", () => {
+  it("uses the same token store across auth and proxy flows", async () => {
+    const tempDir = await mkdtemp(path.join(process.cwd(), ".tmp-integration-"));
+    const tokenFilePath = path.join(tempDir, "antigravity-tokens.json");
+    const tokenStore = new FileTokenStore({ filePath: tokenFilePath });
+    const fetcher: typeof fetch = async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === GOOGLE_OAUTH_TOKEN_URL) {
+        return new Response(
+          JSON.stringify({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url === `${ANTIGRAVITY_ENDPOINT_PROD}/v1internal:loadCodeAssist`) {
+        return new Response("upstream error", { status: 500 });
+      }
+      if (url === `${ANTIGRAVITY_ENDPOINT_DAILY}/v1internal:loadCodeAssist`) {
+        return new Response(
+          JSON.stringify({ cloudaicompanionProject: { id: "project-xyz" } }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("not found", { status: 404 });
+    };
+
+    try {
+      const authService = new OAuthAuthService({
+        tokenStore,
+        sessionStore: new InMemoryAuthSessionStore(),
+        stateSecret: "test-secret",
+        fetch: fetcher,
+      });
+      const authApp = createAuthApp(authService);
+
+      const login = await authApp.request("http://localhost/login");
+      const location = login.headers.get("location");
+      expect(location).toBeTruthy();
+      const state = new URL(location ?? "").searchParams.get("state");
+      expect(state).toBeTruthy();
+
+      const callbackUrl = new URL("http://localhost/oauth-callback");
+      callbackUrl.searchParams.set("code", "auth-code");
+      callbackUrl.searchParams.set("state", state ?? "");
+      const callback = await authApp.request(callbackUrl.toString());
+      expect(callback.status).toBe(200);
+
+      const captured: Array<{ body: { project: string }; headers: Record<string, string> }> = [];
+      const service = createTransformService({
+        tokenStore,
+        requester: async (request) => {
+          captured.push({
+            body: { project: request.body.project },
+            headers: request.headers,
+          });
+          return {
+            ok: true,
+            value: new Response(
+              JSON.stringify({
+                response: {
+                  model: "gemini-3-flash",
+                  candidates: [
+                    {
+                      content: {
+                        role: "model",
+                        parts: [{ text: "Hello" }],
+                      },
+                      finishReason: "STOP",
+                    },
+                  ],
+                },
+              }),
+              { headers: { "Content-Type": "application/json" } }
+            ),
+          };
+        },
+        requestIdFactory: () => "req-auth-proxy-1",
+      });
+
+      const app = createProxyApp({ transformService: service });
+      const response = await app.request("http://localhost/v1/chat/completions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3-flash",
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const payload = await response.json();
+      expect(payload.id).toBe("chatcmpl-req-auth-proxy-1");
+      expect(captured).toHaveLength(1);
+      expect(captured[0].body.project).toBe("project-xyz");
+      expect(captured[0].headers.Authorization).toBe("Bearer access-token");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
