@@ -180,6 +180,80 @@ describe("TransformService", () => {
     expect(capturedStream).toBe(true);
   });
 
+  it("returns transformed response for non-streaming requests", async () => {
+    const upstreamPayload = {
+      model: "gemini-3-flash",
+      candidates: [
+        {
+          content: {
+            role: "model",
+            parts: [{ text: "Hello" }],
+          },
+          finishReason: "STOP",
+        },
+      ],
+      usageMetadata: {
+        promptTokenCount: 2,
+        candidatesTokenCount: 3,
+        totalTokenCount: 5,
+      },
+    };
+
+    const service = createTransformService({
+      tokenStore: {
+        getAccessToken: async () => ({
+          ok: true,
+          value: { accessToken: "token", projectId: "project-id" },
+        }),
+      },
+      requester: async () =>
+        ({
+          ok: true,
+          value: new Response(JSON.stringify(upstreamPayload), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        }) as const,
+      requestIdFactory: () => "req-456",
+    });
+
+    const result = await service.handleCompletion(baseRequest);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) {
+      return;
+    }
+
+    const value = result.value as {
+      id: string;
+      object: string;
+      created: number;
+      model: string;
+      choices: Array<{
+        index: number;
+        message: { role: string; content: string | null };
+        finish_reason: string | null;
+      }>;
+      usage?: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        total_tokens: number;
+      };
+    };
+
+    expect(value.id).toBe("chatcmpl-req-456");
+    expect(value.object).toBe("chat.completion");
+    expect(typeof value.created).toBe("number");
+    expect(value.model).toBe("gemini-3-flash");
+    expect(value.choices[0].message.role).toBe("assistant");
+    expect(value.choices[0].message.content).toBe("Hello");
+    expect(value.choices[0].finish_reason).toBe("stop");
+    expect(value.usage).toEqual({
+      prompt_tokens: 2,
+      completion_tokens: 3,
+      total_tokens: 5,
+    });
+  });
+
   it("returns UPSTREAM_ERROR when streaming response body is missing", async () => {
     const service = createTransformService({
       tokenStore: {

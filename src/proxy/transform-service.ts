@@ -8,7 +8,12 @@ import {
   type TransformResult as RequestTransformResult,
 } from "../transformer/request";
 import { SESSION_ID } from "../transformer/helpers";
-import { transformStream } from "../transformer/response";
+import {
+  transformSingle,
+  transformStream,
+  type AntigravityResponse,
+  type TransformError as ResponseTransformError,
+} from "../transformer/response";
 import type { ChatCompletionRequest } from "../transformer/schema";
 
 export type Result<T, E> = { ok: true; value: T } | { ok: false; error: E };
@@ -90,7 +95,65 @@ export function createTransformService(
           return upstream;
         }
         if (!stream) {
-          return upstream;
+          if (!(upstream.value instanceof Response)) {
+            return {
+              ok: false,
+              error: {
+                code: "UPSTREAM_ERROR",
+                statusCode: 502,
+                message: "Upstream response is invalid.",
+              },
+            };
+          }
+          let payload: unknown;
+          try {
+            payload = await upstream.value.json();
+          } catch (error) {
+            return {
+              ok: false,
+              error: {
+                code: "UPSTREAM_ERROR",
+                statusCode: 502,
+                message: "Failed to parse upstream response.",
+                upstream: error,
+              },
+            };
+          }
+
+          const upstreamError = extractUpstreamError(payload);
+          if (upstreamError) {
+            return {
+              ok: false,
+              error: {
+                code: "UPSTREAM_ERROR",
+                statusCode: 502,
+                message: upstreamError.message,
+                upstream: upstreamError,
+              },
+            };
+          }
+
+          const responsePayload = extractResponsePayload(payload);
+          if (!responsePayload) {
+            return {
+              ok: false,
+              error: {
+                code: "UPSTREAM_ERROR",
+                statusCode: 502,
+                message: "Upstream response payload is missing.",
+              },
+            };
+          }
+
+          const transformed = transformSingle(
+            responsePayload,
+            requestId,
+            SESSION_ID
+          );
+          if (!transformed.ok) {
+            return { ok: false, error: mapResponseTransformError(transformed.error) };
+          }
+          return { ok: true, value: transformed.value };
         }
         if (!(upstream.value instanceof Response)) {
           return {
@@ -175,4 +238,95 @@ function mapTransformError(error: RequestTransformError): ProxyError {
     statusCode: 400,
     message: error.message,
   };
+}
+
+function extractUpstreamError(
+  payload: unknown
+): { type: string; code: string; message: string } | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if (!("error" in payload)) {
+    return null;
+  }
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== "object") {
+    return {
+      type: "upstream_error",
+      code: "upstream_error",
+      message: "Upstream error.",
+    };
+  }
+  const message =
+    typeof (error as { message?: unknown }).message === "string"
+      ? (error as { message: string }).message
+      : "Upstream error.";
+  return {
+    type: "upstream_error",
+    code: "upstream_error",
+    message,
+  };
+}
+
+function extractResponsePayload(payload: unknown): AntigravityResponse | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  if ("response" in payload) {
+    const response = (payload as { response?: unknown }).response;
+    if (response && typeof response === "object") {
+      return response as AntigravityResponse;
+    }
+  }
+  if ("candidates" in payload || "usageMetadata" in payload) {
+    return payload as AntigravityResponse;
+  }
+  return null;
+}
+
+function mapResponseTransformError(error: ResponseTransformError): ProxyError {
+  const mapped = mapResponseTransformErrorPayload(error);
+  const statusCode = mapped.type === "invalid_request_error" ? 400 : 500;
+  return {
+    code: "UPSTREAM_ERROR",
+    statusCode,
+    message: mapped.message,
+    upstream: {
+      type: mapped.type,
+      code: mapped.code,
+    },
+  };
+}
+
+function mapResponseTransformErrorPayload(error: ResponseTransformError): {
+  type: string;
+  code: string;
+  message: string;
+} {
+  switch (error.code) {
+    case "INVALID_MESSAGE_FORMAT":
+      return {
+        type: "invalid_request_error",
+        code: "invalid_request",
+        message: error.message,
+      };
+    case "UNSUPPORTED_FEATURE":
+      return {
+        type: "invalid_request_error",
+        code: "unsupported_parameter",
+        message: error.message,
+      };
+    case "SIGNATURE_CACHE_MISS":
+      return {
+        type: "invalid_request_error",
+        code: "signature_required",
+        message: error.message,
+      };
+    default:
+      return {
+        type: "server_error",
+        code: "internal_error",
+        message: error.message,
+      };
+  }
 }

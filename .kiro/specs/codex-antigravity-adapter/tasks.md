@@ -185,7 +185,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - ストリームエラー時のエラーハンドリング
   - _Requirements: 3.4, 3.5_
 
-- [ ] 6.4 非ストリーミングレスポンスの処理
+- [x] 6.4 非ストリーミングレスポンスの処理
   - Antigravity JSON レスポンスの受信
   - ResponseTransformer を使用したレスポンス変換
   - OpenAI 互換レスポンスの返却
