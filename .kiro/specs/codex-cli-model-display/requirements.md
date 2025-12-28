@@ -108,7 +108,7 @@ providers:
    - 到達不能の場合、警告メッセージを表示せず、静的プリセットのみを表示する。
 
 2. **ユーザー通知**（オプション、初回実行時のみ）:
-   ```
+   ```text
    [INFO] 外部プロバイダー設定が見つかりません。デフォルトで localhost:3000 を試行します。
    [INFO] カスタム設定を追加するには: ~/.config/codex/providers.yaml を作成してください。
    ```
@@ -135,32 +135,32 @@ providers:
 **エラーメッセージと終了コードの仕様**:
 
 1. **設定ファイル形式エラー**（終了コード: 1）:
-   ```
+   ```text
    [ERROR] 設定ファイルの読み込みに失敗しました: ~/.config/codex/providers.yaml
    [ERROR] 詳細: YAML parse error at line 5: invalid indentation
    [INFO] デフォルトプロバイダー（localhost:3000）へフォールバックします。
    ```
 
 2. **必須フィールド欠落**（警告、終了コードは0）:
-   ```
+   ```text
    [WARN] プロバイダー設定エラー（インデックス: 1）: 'endpoint' フィールドが必須です。
    [WARN] このプロバイダーをスキップします。
    ```
 
 3. **URL検証エラー**（警告、終了コードは0）:
-   ```
+   ```text
    [WARN] プロバイダー 'Production Gateway': 無効なエンドポイントURL: 'htp://invalid'
    [WARN] このプロバイダーをスキップします。
    ```
 
 4. **認証エラー**（実行時、警告、終了コードは0）:
-   ```
+   ```text
    [WARN] プロバイダー 'Production Gateway': 認証に失敗しました (HTTP 401)
    [WARN] このプロバイダーのモデルを除外します。
    ```
 
 5. **重複プロバイダー名**（警告、終了コードは0）:
-   ```
+   ```text
    [WARN] プロバイダー名 'Antigravity Adapter' が重複しています（インデックス: 2）。
    [WARN] 最初の定義のみを使用し、重複をスキップします。
    ```
@@ -168,7 +168,7 @@ providers:
 **環境変数参照の処理**:
 - `${VAR_NAME}` 形式の環境変数参照をサポートすること。
 - 環境変数が未定義の場合、警告を表示し、そのプロバイダーをスキップすること。
-  ```
+  ```text
   [WARN] プロバイダー 'Production Gateway': 環境変数 'MODEL_GATEWAY_TOKEN' が未定義です。
   [WARN] このプロバイダーをスキップします。
   ```
@@ -190,7 +190,7 @@ providers:
    - 同一プロバイダー内では、モデル名のアルファベット順（昇順）でソートする。
 
 3. **表示例**:
-   ```
+   ```text
    [静的プリセット]
    1. claude-3-opus
    2. gpt-4
@@ -235,7 +235,7 @@ providers:
    - **戦略B: プロバイダータグ付き並列表示**:
      - 静的と動的の両方を表示し、プロバイダータグで区別する。
      - 表示例:
-       ```
+       ```text
        1. claude-3-opus [static]
        2. claude-3-opus [Antigravity Adapter]
        3. claude-3-opus [Production Gateway]
@@ -249,7 +249,7 @@ providers:
 
 4. **重複ログ**:
    - 重複が検出された場合、デバッグログに記録すること。
-   ```
+   ```text
    [DEBUG] 重複モデル検出: 'claude-3-opus' (static, Antigravity Adapter)
    [DEBUG] 解決戦略 'static_first' を適用: 動的モデルを除外
    ```
@@ -274,7 +274,7 @@ providers:
 
 3. **部分結果マーカー**:
    - インクリメンタルモードの場合、以下のバナーを表示する:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      ⚠️  部分結果を表示中（2/3 プロバイダー応答済み）
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -283,7 +283,7 @@ providers:
 4. **タイムアウト処理**:
    - 設定されたタイムアウト後も応答がないプロバイダーは除外する。
    - 最終的な状態を明示する:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      ✓ すべての利用可能なプロバイダーから取得完了
        (2/3 成功、1 タイムアウト)
@@ -296,17 +296,17 @@ providers:
 1. **スピナー/進捗表示**:
    - 取得中はスピナーアニメーションを表示する。
    - 例:
-     ```
+     ```text
      ⠋ モデル一覧を取得中... (Antigravity Adapter)
      ```
    - 複数プロバイダーの場合、進捗を表示する:
-     ```
+     ```text
      ⠙ モデル一覧を取得中... [2/3 プロバイダー]
      ```
 
 2. **ローディングバナー**:
    - 取得開始時に一時的なバナーを表示する:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      🔄 外部プロバイダーからモデルを取得中...
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -325,7 +325,7 @@ providers:
 4. **エラー時の表示**:
    - エラーが発生した場合、取得成功したモデルと静的プリセットを表示する。
    - エラーの概要を通知する:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      ⚠️ 一部のプロバイダーで取得失敗
        - Production Gateway: タイムアウト
@@ -342,7 +342,7 @@ providers:
    - デフォルトで最初の50モデルを表示する。
    - ハードリミット: 初回表示は最大50件。
    - 表示例:
-     ```
+     ```text
      [モデル 1-50 / 234]
 
      1. claude-3-opus [static]
@@ -364,7 +364,7 @@ providers:
 3. **クライアント側フィルタリング/検索**:
    - リアルタイム検索機能を提供する。
    - 検索モード表示例:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      🔍 検索: gpt▊
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -421,7 +421,7 @@ providers:
 **具体的なログ出力例**:
 
 1. **DEBUG レベル**:
-   ```
+   ```text
    [DEBUG] プロバイダー 'Antigravity Adapter': リクエスト開始
    [DEBUG] プロバイダー 'Antigravity Adapter': 応答受信 (234ms, 12モデル)
    [DEBUG] キャッシュヒット: 'Production Gateway' (TTL残り: 180s)
@@ -429,21 +429,21 @@ providers:
    ```
 
 2. **INFO レベル**:
-   ```
+   ```text
    [INFO] 設定ファイル読み込み: ~/.config/codex/providers.yaml
    [INFO] 3つのプロバイダーを検出: Antigravity Adapter, Production Gateway, Backup Provider
    [INFO] モデル取得完了: 静的プリセット 8件、動的モデル 24件
    ```
 
 3. **WARN レベル**:
-   ```
+   ```text
    [WARN] プロバイダー 'Production Gateway': タイムアウト (3000ms)
    [WARN] プロバイダー 'Backup Provider': HTTP 503 Service Unavailable
    [WARN] 部分取得完了: 1/3 プロバイダー成功
    ```
 
 4. **ERROR レベル**:
-   ```
+   ```text
    [ERROR] すべてのプロバイダーで取得失敗
    [ERROR] 詳細:
      - Antigravity Adapter: 接続拒否
@@ -466,7 +466,7 @@ providers:
 | `codex_cache_misses_total` | Counter | キャッシュミス回数 | `provider` |
 
 **メトリクス出力例**（Prometheus形式）:
-```
+```prometheus
 codex_provider_requests_total{provider="Antigravity Adapter",status="success"} 42
 codex_provider_requests_total{provider="Production Gateway",status="failure"} 5
 codex_provider_request_duration_ms{provider="Antigravity Adapter",status="success"} 234
@@ -483,7 +483,7 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 2. **部分取得状態の明示**:
    - ヘッダーまたはフッターに部分取得であることを示すバナーを表示する。
    - 表示例:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      ⚠️  部分的な結果を表示中
        成功: 1/3 プロバイダー (Antigravity Adapter)
@@ -494,7 +494,7 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 3. **失敗詳細の簡潔な通知**:
    - 失敗したプロバイダー名とエラー理由を簡潔に表示する。
    - 詳細はログファイルを参照するよう案内する。
-   ```
+   ```text
    [INFO] 詳細なエラー情報はログファイルを確認してください: ~/.local/state/codex/logs/provider-errors.log
    ```
 
@@ -531,7 +531,7 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 4. **キャッシュ利用時の表示**:
    - キャッシュから取得した場合、ユーザーに通知する（オプション）。
    - 表示例:
-     ```
+     ```text
      [INFO] プロバイダー 'Production Gateway' のモデルは最後の成功結果（2分前）を使用しています
      ```
 
@@ -549,7 +549,7 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 2. **控えめなバナー/ラベル表示**:
    - 動的モデルが利用不可であることを控えめに通知する。
    - 表示例:
-     ```
+     ```text
      ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
      [静的プリセット]
      1. claude-3-opus
@@ -564,7 +564,7 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 3. **エラー原因の簡潔な説明**（オプション）:
    - ユーザーが詳細を確認できるよう、簡潔なエラー原因を表示する。
    - 表示例:
-     ```
+     ```text
      ℹ️  外部プロバイダーからのモデルは現在利用できません
        理由: すべてのプロバイダーで接続エラー
        詳細: ~/.local/state/codex/logs/provider-errors.log
@@ -628,12 +628,12 @@ codex_provider_errors_total{provider="Production Gateway",error_type="timeout"} 
 4. **3回目以降**: リトライしない → プロバイダーを除外
 
 **ジッターの計算式**:
-```
+```text
 実際の遅延 = 基本遅延 × (1 + ランダム(-0.2, +0.2))
 ```
 
 **リトライ時のログ例**:
-```
+```text
 [DEBUG] プロバイダー 'Production Gateway': リクエスト失敗（タイムアウト）
 [DEBUG] 1回目のリトライを実行（500ms後）...
 [DEBUG] プロバイダー 'Production Gateway': リクエスト失敗（タイムアウト）
