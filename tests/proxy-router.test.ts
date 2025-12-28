@@ -7,7 +7,16 @@ type TransformService = {
     request: unknown
   ) => Promise<
     | { ok: true; value: unknown }
-    | { ok: false; error: { code: string; statusCode: number; message: string } }
+    | {
+        ok: false;
+        error: {
+          code: string;
+          statusCode: number;
+          message: string;
+          upstream?: { type: string; code: string };
+          retryAfter?: string;
+        };
+      }
   >;
 };
 
@@ -53,6 +62,43 @@ describe("Proxy router", () => {
         code: "invalid_api_key",
         message:
           "Authentication required. Please visit http://localhost:51121/login to sign in.",
+      },
+    });
+  });
+
+  it("returns upstream error mappings and retry-after header when provided", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub({
+        handleCompletion: async () => ({
+          ok: false,
+          error: {
+            code: "UPSTREAM_ERROR",
+            statusCode: 429,
+            message: "Rate limit exceeded",
+            upstream: {
+              type: "rate_limit_error",
+              code: "rate_limit_exceeded",
+            },
+            retryAfter: "120",
+          },
+        }),
+      }),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "gemini-3-flash", messages: [] }),
+    });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("120");
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        type: "rate_limit_error",
+        code: "rate_limit_exceeded",
+        message: "Rate limit exceeded",
       },
     });
   });

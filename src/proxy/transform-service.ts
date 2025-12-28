@@ -21,6 +21,7 @@ export type ProxyError = {
   message: string;
   statusCode: number;
   upstream?: unknown;
+  retryAfter?: string;
 };
 
 export type TokenStore = {
