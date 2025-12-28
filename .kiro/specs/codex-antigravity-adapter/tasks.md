@@ -120,7 +120,7 @@ Codex CLI 用 Antigravity Adapter のローカルプロキシを実装する。O
   - Tool ブロック（functionCall/functionResponse）の保持と変換
   - _Requirements: 4.2, 4.4_
 
-- [ ] 4.5 リクエストエンベロープとヘッダーの構築
+- [x] 4.5 リクエストエンベロープとヘッダーの構築
   - `project`/`model`/`request`/`userAgent`/`requestId` でラップしたボディの構築
   - `sessionId` の `request.sessionId` への設定
   - 必須ヘッダーの付加（`Authorization`, `User-Agent`, `X-Goog-Api-Client`, `Client-Metadata`）
