@@ -2,14 +2,14 @@
 
 ## Overview
 
-**Purpose**: Pull Request 作成時および `main` ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する GitHub Actions CI パイプラインを構築する。
+**Purpose**: Pull Request 作成時および `master` ブランチへの Push 時に、ユニットテスト・ビルド・型チェック・Lint を自動実行する GitHub Actions CI パイプラインを構築する。
 
 **Users**: リポジトリ開発者・コントリビュータは、コード変更時に品質チェックの自動フィードバックを受け取る。
 
 **Impact**: 現在 CI 未導入の状態から、自動化された品質ゲートを持つ開発フローへ移行する。
 
 ### Goals
-- PR および main Push をトリガーに CI を自動起動
+- PR および master Push をトリガーに CI を自動起動
 - ユニットテスト、ビルド、型チェック、Lint を一貫して実行
 - 失敗時は明確なフィードバックを GitHub Checks で表示
 - 同一 PR の重複実行を抑制し、フィードバック待ち時間を短縮
@@ -28,9 +28,9 @@
 graph LR
     subgraph GitHub
         PR[Pull Request]
-        Push[Push to main]
+        Push[Push to master]
     end
-    subgraph GitHubActions[GitHub Actions]
+    subgraph GitHubActions[GitHub Actions (ubuntu-slim)]
         Workflow[ci.yml]
         Checkout[actions/checkout]
         SetupBun[oven-sh/setup-bun]
@@ -62,13 +62,29 @@ graph LR
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| CI Platform | GitHub Actions | ワークフロー実行基盤 | 無料枠で十分 |
+| CI Platform | GitHub Actions | ワークフロー実行基盤 | ubuntu-slim (1 vCPU, 5GB RAM) |
 | Runtime Setup | oven-sh/setup-bun@v2 | Bun 環境構築 | package.json の engines.bun を参照 |
 | Checkout | actions/checkout@v4 | リポジトリ取得 | 標準 Action |
 | Test Runner | bun test | ユニットテスト | 既存スクリプト |
 | Build | bun build | ビルド | 既存スクリプト |
 | Type Check | tsc --noEmit | 型チェック | 新規スクリプト追加 |
 | Linter | @biomejs/biome@latest | Lint + Format | 新規導入 |
+
+### CI Execution Flow
+
+**Job Timeout**: GitHub Actions の ubuntu-slim ランナーはジョブごとに 15 分のタイムアウトが適用される。
+
+**対応策**:
+- Lint / TypeCheck / Test / Build を並列ジョブとして実行（依存関係なし）
+- 依存関係キャッシュを有効化（`actions/cache@v4` で `~/.bun/install/cache` をキャッシュ）
+- 推定ステップ時間:
+  - Checkout: ~10秒
+  - Setup Bun: ~15秒
+  - Install（キャッシュ有効時）: ~30秒
+  - 並列ジョブ（Lint/TypeCheck/Test/Build）: ~120秒
+  - **合計推定時間: ~3分**
+
+このタイムアウト制約により、並列実行とキャッシュを活用して効率的なパイプラインを構築する。
 
 ## System Flows
 
@@ -84,16 +100,13 @@ sequenceDiagram
     CI->>CI: Checkout code
     CI->>CI: Setup Bun
     CI->>CI: bun install --frozen-lockfile
-    alt Lint job
+    par Lint job
         CI->>CI: bun run lint
-    end
-    alt Type Check job
+    and Type Check job
         CI->>CI: bun run check-types
-    end
-    alt Test job
+    and Test job
         CI->>CI: bun run test
-    end
-    alt Build job
+    and Build job
         CI->>CI: bun run build
     end
     CI-->>GH: Report status (pass/fail)
@@ -101,15 +114,17 @@ sequenceDiagram
 ```
 
 **Key Decisions**:
-- Lint / TypeCheck / Test / Build は並列ジョブとして実行可能（依存関係なし）
+- Lint / TypeCheck / Test / Build は並列ジョブとして実行（依存関係なし）
 - 各ジョブ失敗時はワークフロー全体が失敗ステータスになる
+- ubuntu-slim ランナーの 15 分タイムアウト制約に対応するため、並列実行と依存関係キャッシュ（`actions/cache@v4` で `~/.bun/install/cache` をキャッシュ）を活用
+- 推定合計実行時間 ~3 分（Checkout ~10s, Setup Bun ~15s, Install ~30s, 並列ジョブ ~120s）
 
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1.1 | PR 作成・更新時に CI 起動 | ci.yml `on.pull_request` | — | CI 実行フロー |
-| 1.2 | main Push 時に CI 起動 | ci.yml `on.push` | — | CI 実行フロー |
+| 1.2 | master Push 時に CI 起動 | ci.yml `on.push` | — | CI 実行フロー |
 | 1.3 | コミット SHA・イベント識別 | ci.yml ログ出力 | — | — |
 | 2.1 | ユニットテスト実行 | Test job, `bun run test` | — | CI 実行フロー |
 | 2.2 | ビルド実行 | Build job, `bun run build` | — | CI 実行フロー |
@@ -150,7 +165,7 @@ sequenceDiagram
 | Requirements | 1.1, 1.2, 1.3, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3 |
 
 **Responsibilities & Constraints**
-- PR および main Push をトリガーに CI を起動
+- PR および master Push をトリガーに CI を起動
 - 4 つのジョブ（lint, type-check, test, build）を並列実行
 - `concurrency` で重複実行を抑制
 - `permissions: contents: read` で読み取り専用
@@ -164,6 +179,11 @@ sequenceDiagram
 **Implementation Notes**
 - `bun-version-file: "package.json"` で engines.bun を参照
 - `bun install --frozen-lockfile` で再現性を保証
+- 依存関係キャッシュは `actions/cache@v4` を使用して実装:
+  - キャッシュキー: `${{ runner.os }}-bun-${{ hashFiles('**/bun.lockb') }}`
+  - キャッシュパス: `~/.bun/install/cache`
+  - リストアキー: `${{ runner.os }}-bun-` でパーシャルマッチを許可
+- **実装後の検証**: テスト PR で実際の実行時間を測定し、15 分タイムアウト以内に安定して完了することを確認する。推定時間（~3 分）を大幅に超える場合は、並列実行の最適化やキャッシュ設定の見直しを実施する
 
 #### Lint Job
 

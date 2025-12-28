@@ -7,6 +7,7 @@ GEMINI.md
 CLAUDE.md
 node_modules/
 bun.lock
+.serena/
 
 # Environment variables and credentials
 .env
