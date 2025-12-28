@@ -16,7 +16,7 @@ CI は Pull Request と `main` ブランチへの Push を契機に、ユニッ�
 
 #### Acceptance Criteria
 1. When Pull Request が作成または更新されたとき, the GitHub Actions CI shall CI を自動で開始する
-2. When `main` ブランチに Push されたとき, the GitHub Actions CI shall CI を自動で開始する
+2. When `master` ブランチに Push されたとき, the GitHub Actions CI shall CI を自動で開始する
 3. When CI が開始されたとき, the GitHub Actions CI shall 実行対象のコミット SHA と対象イベント（PR もしくは Push）を実行ログから識別できるようにする
 
 ### Requirement 2: CI で実行する品質チェック
@@ -36,6 +36,7 @@ CI は Pull Request と `main` ブランチへの Push を契機に、ユニッ�
 1. When CI が開始されたとき, the GitHub Actions CI shall リポジトリが要求する Bun 実行環境（`engines.bun` の制約に適合）で実行する
 2. When CI が開始されたとき, the GitHub Actions CI shall 依存関係の解決がリポジトリのロックファイルに基づいて再現可能であることを保証する
 3. If 依存関係の解決が再現できない状態になったとき, then the GitHub Actions CI shall その理由がログから特定できるように失敗として報告する
+4. When CI が開始されたとき, the GitHub Actions CI shall 軽量な操作に最適化された `ubuntu-slim` ランナーで実行する
 
 ### Requirement 4: 結果の可視性とフィードバック
 **Objective:** As a Pull Request 作成者, I want CI 結果が分かりやすく表示される, so that 修正判断を迅速に行える

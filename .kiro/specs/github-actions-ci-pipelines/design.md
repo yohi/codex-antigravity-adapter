@@ -9,7 +9,7 @@
 **Impact**: 現在 CI 未導入の状態から、自動化された品質ゲートを持つ開発フローへ移行する。
 
 ### Goals
-- PR および main Push をトリガーに CI を自動起動
+- PR および master Push をトリガーに CI を自動起動
 - ユニットテスト、ビルド、型チェック、Lint を一貫して実行
 - 失敗時は明確なフィードバックを GitHub Checks で表示
 - 同一 PR の重複実行を抑制し、フィードバック待ち時間を短縮
@@ -28,9 +28,9 @@
 graph LR
     subgraph GitHub
         PR[Pull Request]
-        Push[Push to main]
+        Push[Push to master]
     end
-    subgraph GitHubActions[GitHub Actions]
+    subgraph GitHubActions[GitHub Actions (ubuntu-slim)]
         Workflow[ci.yml]
         Checkout[actions/checkout]
         SetupBun[oven-sh/setup-bun]
@@ -62,7 +62,7 @@ graph LR
 
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
-| CI Platform | GitHub Actions | ワークフロー実行基盤 | 無料枠で十分 |
+| CI Platform | GitHub Actions | ワークフロー実行基盤 | ubuntu-slim (1 vCPU, 5GB RAM) |
 | Runtime Setup | oven-sh/setup-bun@v2 | Bun 環境構築 | package.json の engines.bun を参照 |
 | Checkout | actions/checkout@v4 | リポジトリ取得 | 標準 Action |
 | Test Runner | bun test | ユニットテスト | 既存スクリプト |
@@ -109,7 +109,7 @@ sequenceDiagram
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
 | 1.1 | PR 作成・更新時に CI 起動 | ci.yml `on.pull_request` | — | CI 実行フロー |
-| 1.2 | main Push 時に CI 起動 | ci.yml `on.push` | — | CI 実行フロー |
+| 1.2 | master Push 時に CI 起動 | ci.yml `on.push` | — | CI 実行フロー |
 | 1.3 | コミット SHA・イベント識別 | ci.yml ログ出力 | — | — |
 | 2.1 | ユニットテスト実行 | Test job, `bun run test` | — | CI 実行フロー |
 | 2.2 | ビルド実行 | Build job, `bun run build` | — | CI 実行フロー |
@@ -150,7 +150,7 @@ sequenceDiagram
 | Requirements | 1.1, 1.2, 1.3, 4.1, 4.2, 4.3, 5.1, 5.2, 6.1, 6.2, 6.3 |
 
 **Responsibilities & Constraints**
-- PR および main Push をトリガーに CI を起動
+- PR および master Push をトリガーに CI を起動
 - 4 つのジョブ（lint, type-check, test, build）を並列実行
 - `concurrency` で重複実行を抑制
 - `permissions: contents: read` で読み取り専用
