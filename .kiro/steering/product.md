@@ -4,7 +4,10 @@
 A local proxy adapter allowing [Codex CLI](https://github.com/tool-codex/codex-cli) (OpenAI-compatible client) to communicate with Google's internal Antigravity (Cloud Code Assist) API. It handles authentication, protocol translation, and specific API quirks (like "Thinking" blocks and signatures).
 
 ## Core Capabilities
-- **Local Proxy:** Exposes an OpenAI-compatible `/v1/chat/completions` endpoint.
+- **Local Proxy:** Exposes OpenAI-compatible `/v1/chat/completions` and `/v1/models` endpoints.
+- **Model Discovery:**
+  - Provides a list of available models (Gemini, Claude, etc.) to clients.
+  - Supports dynamic model catalog expansion via environment variables and local JSON files.
 - **Protocol Translation:**
   - Converts OpenAI chat format (`messages`) to Antigravity format (`contents`).
   - Converts Antigravity SSE streams back to OpenAI-compatible SSE.
