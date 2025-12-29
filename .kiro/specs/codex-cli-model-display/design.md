@@ -110,19 +110,22 @@ sequenceDiagram
 | Intent | 環境変数と設定ファイルを読み込み、モデル一覧を統合して提供する |
 | Requirements | 1.1, 1.2, 1.3, 2.1, 2.2 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
+
 - 起動時に一度だけモデル設定を読み込み、結果を返す
 - 環境変数は JSON 配列 → カンマ区切りの順に解釈する
 - 設定ファイルは `cwd/custom-models.json` → `.codex/custom-models.json` の順で探索する
 - 重複は ID ベースで排除し、`env > file > fixed` の優先順位を保つ
 
-**Dependencies**
+##### Dependencies
 - Inbound: `startApplication` または `createAppContext` — 起動時ロード (P0)
 - External: `Bun.file` — ファイル読み込み (P0)
 - External: `Logger` — 警告ログ出力 (P1)
 - External: `Zod` — JSON 検証 (P1)
 
-**Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
+##### Contracts
+
+Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
 
 ##### Service Interface
 ```typescript
@@ -164,7 +167,8 @@ interface ModelSettingsService {
   - `AvailableModel.id` は一意
   - `AvailableModel.object` は常に "model"
 
-**Implementation Notes**
+###### Implementation Notes
+
 - Integration: `startApplication`/`createAppContext` を非同期化し、`load` 完了後に `createProxyApp` へ `ModelCatalog` を注入する
 - Validation: `custom-models.json` は `models: string[]` のみ許容し、空文字や空白のみの ID は除外する
 - Risks: 起動フローの非同期化により初期化順が崩れないようにする
@@ -178,18 +182,22 @@ interface ModelSettingsService {
 | Intent | OpenAI 互換の `/v1/models` を提供する |
 | Requirements | 2.3 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
+
 - `ModelCatalog.models` を使用してレスポンスを構築する
 - 既存の `/v1/chat/completions` には影響を与えない
 
-**Dependencies**
+##### Dependencies
 - Inbound: Codex CLI — HTTP クライアント (P0)
 - Inbound: ModelCatalog — 起動時注入 (P0)
 - Inbound: TransformService — 既存依存 (P0)
 
-**Contracts**: Service [ ] / API [x] / Event [ ] / Batch [ ] / State [ ]
+##### Contracts
+
+Service [ ] / API [x] / Event [ ] / Batch [ ] / State [ ]
 
 ##### API Contract
+
 | Method | Endpoint | Request | Response | Errors |
 |--------|----------|---------|----------|--------|
 | GET | /v1/models | - | ModelsListResponse | - |
@@ -201,7 +209,8 @@ type ModelsListResponse = {
 };
 ```
 
-**Implementation Notes**
+###### Implementation Notes
+
 - Integration: `createProxyApp` の引数に `modelCatalog` を追加し、`FIXED_MODEL_IDS` の直接参照を排除する
 - Validation: レスポンス形式は既存実装と同一
 - Risks: モデルリストが空でも OpenAI 互換形式を維持する
@@ -214,7 +223,8 @@ type ModelsListResponse = {
 
 ### Logical Data Model
 
-**Structure Definition**:
+#### Structure Definition
+
 | Entity | Attributes | Type | Notes |
 |--------|------------|------|-------|
 | AvailableModel | id | string | ユニーク ID |
@@ -224,21 +234,25 @@ type ModelsListResponse = {
 | ModelCatalog | models | AvailableModel[] | 統合済み一覧 |
 |  | sources | ModelSourceCounts | 読み込み元の件数 |
 
-**Consistency & Integrity**:
+#### Consistency & Integrity
+
 - ID ベースで重複排除し、`env > file > fixed` を優先する
 - モデル一覧の順序はマージ順で安定化する
 
 ### Data Contracts & Integration
 
-**custom-models.json**
+#### custom-models.json
+
 ```json
 {
   "models": ["custom-model-a", "custom-model-b"]
 }
 ```
+
 探索順: `cwd/custom-models.json` → `.codex/custom-models.json`（先に見つかった 1 件のみ採用）。
 
-**環境変数形式**
+#### 環境変数形式
+
 ```bash
 ANTIGRAVITY_ADDITIONAL_MODELS="gemini-1.5-pro-latest,claude-3-5-sonnet"
 ANTIGRAVITY_ADDITIONAL_MODELS='["gemini-1.5-pro-latest","claude-3-5-sonnet"]'
