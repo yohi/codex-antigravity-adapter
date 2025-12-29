@@ -37,7 +37,7 @@ export type ModelSettingsService = {
 };
 
 const DEFAULT_ENV_VAR = "ANTIGRAVITY_ADDITIONAL_MODELS";
-const DEFAULT_FIXED_MODEL_IDS = [
+export const DEFAULT_FIXED_MODEL_IDS = [
   "gemini-3-pro-high",
   "gemini-3-pro-low",
   "gemini-3-flash",
