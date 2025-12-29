@@ -1,5 +1,9 @@
 import { Hono } from "hono";
 
+import {
+  DEFAULT_FIXED_MODEL_IDS,
+  type ModelCatalog,
+} from "../config/model-settings-service";
 import { ChatCompletionRequestSchema } from "../transformer/schema";
 import type { ProxyError, TransformService } from "./transform-service";
 
@@ -17,22 +21,16 @@ export type ProxyServerOptions = {
 
 export type CreateProxyAppOptions = {
   transformService: TransformService;
+  modelCatalog?: ModelCatalog;
 };
 
 const DEFAULT_PROXY_PORT = 3000;
 const DEFAULT_PROXY_HOSTNAME = "127.0.0.1";
-const FIXED_MODEL_IDS = [
-  "gemini-3-pro-high",
-  "gemini-3-pro-low",
-  "gemini-3-flash",
-  "claude-sonnet-4-5",
-  "claude-sonnet-4-5-thinking",
-  "claude-opus-4-5-thinking",
-  "gpt-oss-120b-medium",
-] as const;
 
 export function createProxyApp(options: CreateProxyAppOptions): Hono {
-  const app = new Hono();
+  const modelCatalog = options.modelCatalog ?? buildDefaultModelCatalog();
+  const app = new Hono() as Hono & { modelCatalog: ModelCatalog };
+  app.modelCatalog = modelCatalog;
 
   app.post("/v1/chat/completions", async (c) => {
     let payload: unknown;
@@ -106,7 +104,7 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     return c.json(
       {
         object: "list",
-        data: FIXED_MODEL_IDS.map((id) => ({
+        data: DEFAULT_FIXED_MODEL_IDS.map((id) => ({
           id,
           object: "model",
           created,
@@ -160,6 +158,23 @@ export function startProxyServer(app: Hono, options: ProxyServerOptions = {}) {
     });
 
   return serve({ fetch: app.fetch, port, hostname });
+}
+
+function buildDefaultModelCatalog(): ModelCatalog {
+  const created = Math.floor(Date.now() / 1000);
+  return {
+    models: DEFAULT_FIXED_MODEL_IDS.map((id) => ({
+      id,
+      object: "model",
+      created,
+      owned_by: "antigravity",
+    })),
+    sources: {
+      fixed: DEFAULT_FIXED_MODEL_IDS.length,
+      file: 0,
+      env: 0,
+    },
+  };
 }
 
 function isReadableStream(value: unknown): value is ReadableStream<Uint8Array> {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import type { ModelCatalog } from "../src/config/model-settings-service";
+import { DEFAULT_FIXED_MODEL_IDS } from "../src/config/model-settings-service";
 import { createProxyApp, startProxyServer } from "../src/proxy/proxy-router";
 
 type TransformService = {
@@ -32,7 +34,53 @@ function createTransformServiceStub(
   };
 }
 
+function createTestCatalog(ids: string[]): ModelCatalog {
+  return {
+    models: ids.map((id) => ({
+      id,
+      object: "model",
+      created: 1_700_000_000,
+      owned_by: "antigravity",
+    })),
+    sources: {
+      env: ids.length,
+      file: 0,
+      fixed: 0,
+    },
+  };
+}
+
 describe("Proxy router", () => {
+  it("attaches the provided model catalog to the app", () => {
+    const catalog = createTestCatalog(["custom-model"]);
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+      modelCatalog: catalog,
+    });
+
+    const attached = (app as { modelCatalog?: ModelCatalog }).modelCatalog;
+    expect(attached).toEqual(catalog);
+  });
+
+  it("creates a default model catalog when one is not provided", () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+    });
+
+    const attached = (app as { modelCatalog?: ModelCatalog }).modelCatalog;
+    expect(attached?.sources).toEqual({
+      env: 0,
+      file: 0,
+      fixed: DEFAULT_FIXED_MODEL_IDS.length,
+    });
+    expect(attached?.models.map((model) => model.id)).toEqual(DEFAULT_FIXED_MODEL_IDS);
+    expect(
+      attached?.models.every(
+        (model) => model.object === "model" && model.owned_by === "antigravity"
+      )
+    ).toBe(true);
+  });
+
   it("returns 401 with authentication guidance when unauthenticated", async () => {
     const app = createProxyApp({
       transformService: createTransformServiceStub({
