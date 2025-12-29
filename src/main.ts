@@ -195,12 +195,49 @@ function buildFixedModelCatalog(
   };
 }
 
+/**
+ * Parses and validates a port number from a string value.
+ * Returns the port number if valid (1-65535), otherwise undefined.
+ *
+ * @param value - The string value to parse
+ * @returns A valid port number or undefined
+ */
+function parsePort(value: string | undefined): number | undefined {
+  if (!value || value.trim() === "") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  // Reject strings that don't represent valid integers (e.g., decimals, non-numeric)
+  // Use a regex to ensure the string contains only digits
+  if (!/^\d+$/.test(trimmed)) {
+    return undefined;
+  }
+
+  const parsed = parseInt(trimmed, 10);
+
+  // Check if parsing was successful and the result is a finite integer
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return undefined;
+  }
+
+  // Validate TCP port range (1-65535)
+  if (parsed < 1 || parsed > 65535) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
 export type StartApplicationOptions = {
   debug?: boolean;
   logger?: Logger;
   modelSettingsService?: ModelSettingsService;
   fixedModelIds?: readonly string[];
   now?: () => number;
+  startAuthServer?: typeof startAuthServer;
+  startProxyServer?: typeof startProxyServer;
 };
 
 export async function startApplication(options: StartApplicationOptions = {}) {
@@ -214,13 +251,15 @@ export async function startApplication(options: StartApplicationOptions = {}) {
     now: options.now,
   });
   const { authApp, proxyApp } = createAppContext({ logger, modelCatalog });
-  const proxyPort = process.env.PORT ? parseInt(process.env.PORT) : undefined;
+  const proxyPort = parsePort(process.env.PORT);
   return startServers({
     authApp,
     proxyApp,
     logger,
     debug,
     proxyOptions: { port: proxyPort },
+    startAuthServer: options.startAuthServer,
+    startProxyServer: options.startProxyServer,
   });
 }
 

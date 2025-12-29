@@ -23,9 +23,14 @@ async function waitForServer(timeoutMs = 15000) {
       if (response.ok) {
         // Also wait for proxy to be ready
         try {
-            await fetch(MODELS_URL);
-            return;
-        } catch {}
+            const modelsResponse = await fetch(MODELS_URL);
+            if (modelsResponse.ok) {
+              return;
+            }
+            // response.ok が false の場合は continue してループを継続
+        } catch {
+          // ネットワークエラーなどは無視してループを継続
+        }
       }
     } catch {
       // ignore
