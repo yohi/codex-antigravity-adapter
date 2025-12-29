@@ -25,6 +25,8 @@ export type ModelSettingsOptions = {
   envVar?: string;
   now?: () => number;
   logger?: Logger;
+  /** テスト用: パスの安全性チェックをスキップする */
+  skipPathSafetyCheck?: boolean;
 };
 
 export type ModelSettingsService = {
@@ -55,9 +57,14 @@ async function loadModelSettings(
   const envVar = options.envVar ?? DEFAULT_ENV_VAR;
   const now = options.now ?? (() => Date.now());
   const logger = options.logger ?? NOOP_LOGGER;
+  const skipPathSafetyCheck = options.skipPathSafetyCheck ?? false;
 
   const envModels = parseEnvModels(process.env[envVar], logger);
-  const fileModels = await readFileModels(options.customModelPaths ?? [], logger);
+  const fileModels = await readFileModels(
+    options.customModelPaths ?? [],
+    logger,
+    skipPathSafetyCheck
+  );
   const created = Math.floor(now() / 1000);
 
   // 重複排除: first-seen-wins（env → file → fixed の優先順位）
@@ -102,24 +109,28 @@ function parseEnvModels(value: string | undefined, logger: Logger): string[] {
   const trimmed = value.trim();
   if (!trimmed) return [];
 
-  // まずJSON配列としてパースを試みる
   let items: unknown[];
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (!Array.isArray(parsed)) {
-      logger.warn("parseEnvModels: JSON value is not an array, falling back to CSV", {
+  if (trimmed.startsWith("[")) {
+    // まずJSON配列としてパースを試みる
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        logger.warn("parseEnvModels: JSON value is not an array, falling back to CSV", {
+          value: trimmed,
+        });
+        items = trimmed.split(",");
+      } else {
+        items = parsed;
+      }
+    } catch (error) {
+      // JSON.parseが失敗した場合、カンマ区切り文字列としてフォールバック
+      logger.warn("parseEnvModels: JSON.parse failed, falling back to CSV", {
         value: trimmed,
+        error: error instanceof Error ? error.message : String(error),
       });
       items = trimmed.split(",");
-    } else {
-      items = parsed;
     }
-  } catch (error) {
-    // JSON.parseが失敗した場合、カンマ区切り文字列としてフォールバック
-    logger.warn("parseEnvModels: JSON.parse failed, falling back to CSV", {
-      value: trimmed,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  } else {
     items = trimmed.split(",");
   }
 
@@ -140,7 +151,8 @@ function parseEnvModels(value: string | undefined, logger: Logger): string[] {
 
 async function readFileModels(
   paths: readonly string[],
-  logger: Logger
+  logger: Logger,
+  skipPathSafetyCheck: boolean = false
 ): Promise<string[]> {
   if (paths.length === 0) return [];
 
@@ -153,8 +165,8 @@ async function readFileModels(
   }
 
   for (const filePath of paths) {
-    // パストラバーサル保護：'..' を含むパスや絶対パスを拒否
-    if (isUnsafePath(filePath)) {
+    // パストラバーサル保護：'..' を含むパスや絶対パスを拒否（テスト環境ではスキップ可能）
+    if (!skipPathSafetyCheck && isUnsafePath(filePath)) {
       logger.warn("readFileModels: rejecting unsafe path", {
         filePath,
         reason: "path contains '..' or is absolute",
@@ -185,7 +197,7 @@ async function readFileModels(
   return [];
 }
 
-function isUnsafePath(filePath: string): boolean {
+export function isUnsafePath(filePath: string): boolean {
   // 絶対パスかチェック（Unix: / で始まる、Windows: ドライブレター）
   if (filePath.startsWith("/") || /^[a-zA-Z]:\\/.test(filePath)) {
     return true;
