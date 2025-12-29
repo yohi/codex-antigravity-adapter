@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { createModelSettingsService } from "../../src/config/model-settings-service";
@@ -35,11 +36,12 @@ describe("ModelSettingsService", () => {
   });
 
   it("builds a model catalog from fixed, env, and file sources", async () => {
+    // OS一時ディレクトリを使用してリポジトリを汚染しない
     const tempDir = await mkdtemp(
-      path.join(process.cwd(), ".tmp-antigravity-models-")
+      path.join(os.tmpdir(), "antigravity-models-")
     );
     const filePath = path.join(tempDir, "custom-models.json");
-    const relativeFilePath = path.relative(process.cwd(), filePath);
+
     await writeFile(
       filePath,
       JSON.stringify({ models: ["file-model"] }),
@@ -51,8 +53,9 @@ describe("ModelSettingsService", () => {
       const service = createModelSettingsService();
       const catalog = await service.load({
         fixedModelIds: ["fixed-model"],
-        customModelPaths: [relativeFilePath],
+        customModelPaths: [filePath], // 絶対パスを直接使用
         now: () => 1_700_000_000_000,
+        skipPathSafetyCheck: true, // テストでは絶対パスを許可
       });
 
       expect(catalog.sources).toEqual({ fixed: 1, file: 1, env: 1 });
