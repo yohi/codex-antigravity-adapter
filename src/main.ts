@@ -117,8 +117,8 @@ export async function loadModelCatalog(
   try {
     const catalog = await modelSettingsService.load({
       logger,
-      fixedModelIds: options.fixedModelIds,
-      now: options.now,
+      fixedModelIds,
+      now,
     });
     const errors = entries.map((entry) => ({
       level: entry.level,
