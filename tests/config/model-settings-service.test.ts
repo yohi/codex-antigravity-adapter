@@ -126,6 +126,44 @@ describe("ModelSettingsService", () => {
     ]);
   });
 
+  it("counts source models before dedupe and keeps first-seen wins", async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
+    const filePath = path.join(tempDir, "custom-models.json");
+
+    process.env.ANTIGRAVITY_ADDITIONAL_MODELS = JSON.stringify([
+      "shared-model",
+      "env-only",
+      "shared-model",
+    ]);
+    await writeFile(
+      filePath,
+      JSON.stringify({ models: ["file-only", "shared-model", "file-only"] }),
+      "utf8"
+    );
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["shared-model", "fixed-only"],
+        customModelPaths: [filePath],
+        now: () => 1_700_000_888_000,
+        skipPathSafetyCheck: true,
+      });
+
+      expect(catalog.sources).toEqual({ fixed: 2, file: 3, env: 3 });
+      expect(catalog.models.map((model) => model.id)).toEqual([
+        "shared-model",
+        "env-only",
+        "file-only",
+        "fixed-only",
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("parses CSV env models without warnings", async () => {
     process.env.ANTIGRAVITY_ADDITIONAL_MODELS = " model-a , model-b ";
     const { entries, logger } = createTestLogger();
