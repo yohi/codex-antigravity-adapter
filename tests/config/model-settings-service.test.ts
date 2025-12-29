@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -22,6 +22,30 @@ function createTestLogger() {
   };
 
   return { entries, logger };
+}
+
+function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
+  return typeof error === "object" && error !== null && "code" in error;
+}
+
+async function readFileIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if (isErrnoException(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function restoreFile(filePath: string, contents: string | undefined): Promise<void> {
+  if (contents === undefined) {
+    await rm(filePath, { force: true });
+    return;
+  }
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, contents, "utf8");
 }
 
 describe("ModelSettingsService", () => {
@@ -81,6 +105,7 @@ describe("ModelSettingsService", () => {
     const service = createModelSettingsService();
     const catalog = await service.load({
       fixedModelIds: ["fixed-a", "fixed-b"],
+      customModelPaths: [],
       now: () => 1_700_000_111_000,
     });
 
@@ -108,6 +133,7 @@ describe("ModelSettingsService", () => {
     const service = createModelSettingsService();
     const catalog = await service.load({
       fixedModelIds: [],
+      customModelPaths: [],
       logger,
       now: () => 1_700_000_222_000,
     });
@@ -123,11 +149,119 @@ describe("ModelSettingsService", () => {
     const service = createModelSettingsService();
     const catalog = await service.load({
       fixedModelIds: [],
+      customModelPaths: [],
       logger,
       now: () => 1_700_000_333_000,
     });
 
     expect(catalog.models.map((model) => model.id)).toEqual(["[invalid]"]);
     expect(entries.some((entry) => entry.level === "warn")).toBe(true);
+  });
+
+  it("prefers ./custom-models.json over .codex/custom-models.json and logs when both exist", async () => {
+    const { entries, logger } = createTestLogger();
+    const cwdFile = path.join(process.cwd(), "custom-models.json");
+    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
+    const cwdBackup = await readFileIfExists(cwdFile);
+    const codexBackup = await readFileIfExists(codexFile);
+
+    await writeFile(
+      cwdFile,
+      JSON.stringify({ models: ["cwd-model"] }),
+      "utf8"
+    );
+    await mkdir(path.dirname(codexFile), { recursive: true });
+    await writeFile(
+      codexFile,
+      JSON.stringify({ models: ["codex-model"] }),
+      "utf8"
+    );
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: [],
+        logger,
+        now: () => 1_700_000_444_000,
+      });
+
+      expect(catalog.models.map((model) => model.id)).toEqual(["cwd-model"]);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "info" &&
+            entry.message.includes("Loaded custom models from ./custom-models.json")
+        )
+      ).toBe(true);
+    } finally {
+      await restoreFile(cwdFile, cwdBackup);
+      await restoreFile(codexFile, codexBackup);
+    }
+  });
+
+  it("logs info and skips file models when no custom models file is found", async () => {
+    const { entries, logger } = createTestLogger();
+    const cwdFile = path.join(process.cwd(), "custom-models.json");
+    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
+    const cwdBackup = await readFileIfExists(cwdFile);
+    const codexBackup = await readFileIfExists(codexFile);
+
+    await rm(cwdFile, { force: true });
+    await rm(codexFile, { force: true });
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        logger,
+        now: () => 1_700_000_555_000,
+      });
+
+      expect(catalog.sources.file).toBe(0);
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "info" &&
+            entry.message.includes("Custom models file not found")
+        )
+      ).toBe(true);
+    } finally {
+      await restoreFile(cwdFile, cwdBackup);
+      await restoreFile(codexFile, codexBackup);
+    }
+  });
+
+  it("logs errors and skips file models when custom-models.json is invalid", async () => {
+    const { entries, logger } = createTestLogger();
+    const cwdFile = path.join(process.cwd(), "custom-models.json");
+    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
+    const cwdBackup = await readFileIfExists(cwdFile);
+    const codexBackup = await readFileIfExists(codexFile);
+
+    await writeFile(cwdFile, "{bad json", "utf8");
+    await rm(codexFile, { force: true });
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        logger,
+        now: () => 1_700_000_666_000,
+      });
+
+      expect(catalog.sources.file).toBe(0);
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "error" &&
+            entry.message.includes("Failed to parse custom models file")
+        )
+      ).toBe(true);
+    } finally {
+      await restoreFile(cwdFile, cwdBackup);
+      await restoreFile(codexFile, codexBackup);
+    }
   });
 });

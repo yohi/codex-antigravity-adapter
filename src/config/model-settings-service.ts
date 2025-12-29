@@ -43,6 +43,10 @@ const DEFAULT_FIXED_MODEL_IDS = [
   "claude-opus-4-5-thinking",
   "gpt-oss-120b-medium",
 ];
+const DEFAULT_CUSTOM_MODEL_PATHS = [
+  "./custom-models.json",
+  ".codex/custom-models.json",
+];
 
 export function createModelSettingsService(): ModelSettingsService {
   return {
@@ -58,10 +62,12 @@ async function loadModelSettings(
   const now = options.now ?? (() => Date.now());
   const logger = options.logger ?? NOOP_LOGGER;
   const skipPathSafetyCheck = options.skipPathSafetyCheck ?? false;
+  const customModelPaths =
+    options.customModelPaths ?? DEFAULT_CUSTOM_MODEL_PATHS;
 
   const envModels = parseEnvModels(process.env[envVar], logger);
   const fileModels = await readFileModels(
-    options.customModelPaths ?? [],
+    customModelPaths,
     logger,
     skipPathSafetyCheck
   );
@@ -156,14 +162,7 @@ async function readFileModels(
 ): Promise<string[]> {
   if (paths.length === 0) return [];
 
-  // 複数ファイルが設定されている場合は通知
-  if (paths.length > 1) {
-    logger.info("readFileModels: multiple files configured, only first valid file will be used", {
-      count: paths.length,
-      paths,
-    });
-  }
-
+  const candidatePaths: string[] = [];
   for (const filePath of paths) {
     // パストラバーサル保護：'..' を含むパスや絶対パスを拒否（テスト環境ではスキップ可能）
     if (!skipPathSafetyCheck && isUnsafePath(filePath)) {
@@ -173,28 +172,78 @@ async function readFileModels(
       });
       continue;
     }
+    candidatePaths.push(filePath);
+  }
 
+  if (candidatePaths.length === 0) return [];
+
+  const existingPaths: string[] = [];
+  for (const filePath of candidatePaths) {
     try {
-      const contents = await Bun.file(filePath).text();
-      const parsed = JSON.parse(contents);
-      if (isRecord(parsed) && Array.isArray(parsed.models)) {
-        // 文字列のみをフィルタリングし、trim して空白のみのIDを除外
-        const cleaned = parsed.models
-          .filter((item): item is string => typeof item === "string")
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0);
-        return cleaned;
+      if (await Bun.file(filePath).exists()) {
+        existingPaths.push(filePath);
       }
     } catch (error) {
-      // ファイル読み取り/JSONパースエラーをログに記録
-      logger.error("readFileModels: failed to read or parse file", {
+      logger.error("Failed to check custom models file", {
         filePath,
         error: error instanceof Error ? error.message : String(error),
       });
-      continue;
     }
   }
-  return [];
+
+  if (existingPaths.length === 0) {
+    logger.info("Custom models file not found, continuing with fixed models", {
+      paths: candidatePaths,
+    });
+    return [];
+  }
+
+  const selectedPath = existingPaths[0];
+  const ignoredPaths = existingPaths.slice(1);
+  if (ignoredPaths.length > 0) {
+    logger.info(
+      `Loaded custom models from ${selectedPath}, ignoring ${ignoredPaths.join(", ")}`,
+      {
+        selectedPath,
+        ignoredPaths,
+      }
+    );
+  }
+
+  let contents: string;
+  try {
+    contents = await Bun.file(selectedPath).text();
+  } catch (error) {
+    logger.error("Failed to read custom models file", {
+      path: selectedPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch (error) {
+    logger.error("Failed to parse custom models file as JSON", {
+      path: selectedPath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return [];
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.models)) {
+    logger.error("Custom models file has invalid shape", {
+      path: selectedPath,
+    });
+    return [];
+  }
+
+  const cleaned = parsed.models
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return cleaned;
 }
 
 export function isUnsafePath(filePath: string): boolean {
