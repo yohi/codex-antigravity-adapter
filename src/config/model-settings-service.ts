@@ -102,24 +102,28 @@ function parseEnvModels(value: string | undefined, logger: Logger): string[] {
   const trimmed = value.trim();
   if (!trimmed) return [];
 
-  // まずJSON配列としてパースを試みる
   let items: unknown[];
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (!Array.isArray(parsed)) {
-      logger.warn("parseEnvModels: JSON value is not an array, falling back to CSV", {
+  if (trimmed.startsWith("[")) {
+    // まずJSON配列としてパースを試みる
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) {
+        logger.warn("parseEnvModels: JSON value is not an array, falling back to CSV", {
+          value: trimmed,
+        });
+        items = trimmed.split(",");
+      } else {
+        items = parsed;
+      }
+    } catch (error) {
+      // JSON.parseが失敗した場合、カンマ区切り文字列としてフォールバック
+      logger.warn("parseEnvModels: JSON.parse failed, falling back to CSV", {
         value: trimmed,
+        error: error instanceof Error ? error.message : String(error),
       });
       items = trimmed.split(",");
-    } else {
-      items = parsed;
     }
-  } catch (error) {
-    // JSON.parseが失敗した場合、カンマ区切り文字列としてフォールバック
-    logger.warn("parseEnvModels: JSON.parse failed, falling back to CSV", {
-      value: trimmed,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  } else {
     items = trimmed.split(",");
   }
 
