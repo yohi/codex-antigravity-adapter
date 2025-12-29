@@ -3,6 +3,12 @@ import type { Hono } from "hono";
 import { createAuthApp, startAuthServer, type AuthServerOptions } from "./auth/auth-router";
 import { OAuthAuthService } from "./auth/auth-service";
 import { FileTokenStore } from "./auth/token-store";
+import {
+  createModelSettingsService,
+  DEFAULT_FIXED_MODEL_IDS,
+  type ModelCatalog,
+  type ModelSettingsService,
+} from "./config/model-settings-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
@@ -86,10 +92,126 @@ export function startServers(options: StartServersOptions) {
   return { authServer, proxyServer, shutdown };
 }
 
-export function startApplication(options: { debug?: boolean; logger?: Logger } = {}) {
+type LoadModelCatalogOptions = {
+  logger: Logger;
+  modelSettingsService?: ModelSettingsService;
+  fixedModelIds?: readonly string[];
+  now?: () => number;
+};
+
+type CatalogLogEntry = {
+  level: "warn" | "error";
+  message: string;
+};
+
+export async function loadModelCatalog(
+  options: LoadModelCatalogOptions
+): Promise<ModelCatalog> {
+  const baseLogger = options.logger;
+  const modelSettingsService =
+    options.modelSettingsService ?? createModelSettingsService();
+  const fixedModelIds = options.fixedModelIds ?? DEFAULT_FIXED_MODEL_IDS;
+  const now = options.now ?? (() => Date.now());
+  const { logger, entries } = createCapturingLogger(baseLogger);
+
+  try {
+    const catalog = await modelSettingsService.load({
+      logger,
+      fixedModelIds: options.fixedModelIds,
+      now: options.now,
+    });
+    const errors = entries.map((entry) => ({
+      level: entry.level,
+      message: entry.message,
+    }));
+    if (errors.length === 0) {
+      baseLogger.info("Model catalog loaded successfully", {
+        sources: catalog.sources,
+        totalModels: catalog.models.length,
+      });
+    } else {
+      baseLogger.info("Model catalog loaded with partial errors", {
+        sources: catalog.sources,
+        totalModels: catalog.models.length,
+        errors,
+      });
+    }
+    return catalog;
+  } catch (error) {
+    const fallbackCatalog = buildFixedModelCatalog(fixedModelIds, now);
+    baseLogger.warn("Model catalog loaded with errors, using fixed models only", {
+      sources: fallbackCatalog.sources,
+      totalModels: fallbackCatalog.models.length,
+      errors: [
+        {
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    });
+    return fallbackCatalog;
+  }
+}
+
+function createCapturingLogger(baseLogger: Logger): {
+  logger: Logger;
+  entries: CatalogLogEntry[];
+} {
+  const entries: CatalogLogEntry[] = [];
+  const logger: Logger = {
+    debug: (message, context) => baseLogger.debug(message, context),
+    info: (message, context) => baseLogger.info(message, context),
+    warn: (message, context) => {
+      entries.push({ level: "warn", message });
+      baseLogger.warn(message, context);
+    },
+    error: (message, context) => {
+      entries.push({ level: "error", message });
+      baseLogger.error(message, context);
+    },
+  };
+
+  return { logger, entries };
+}
+
+function buildFixedModelCatalog(
+  fixedModelIds: readonly string[],
+  now: () => number
+): ModelCatalog {
+  const created = Math.floor(now() / 1000);
+  return {
+    models: fixedModelIds.map((id) => ({
+      id,
+      object: "model",
+      created,
+      owned_by: "antigravity",
+    })),
+    sources: {
+      fixed: fixedModelIds.length,
+      file: 0,
+      env: 0,
+    },
+  };
+}
+
+export type StartApplicationOptions = {
+  debug?: boolean;
+  logger?: Logger;
+  modelSettingsService?: ModelSettingsService;
+  fixedModelIds?: readonly string[];
+  now?: () => number;
+};
+
+export async function startApplication(options: StartApplicationOptions = {}) {
   const debug = options.debug ?? isDebugEnabled(process.env.ANTIGRAVITY_DEBUG_LOGS);
   const logger = options.logger ?? createLogger({ debug });
   logger.info(STARTUP_BANNER, { status: "starting" });
+  await loadModelCatalog({
+    logger,
+    modelSettingsService: options.modelSettingsService,
+    fixedModelIds: options.fixedModelIds,
+    now: options.now,
+  });
   const { authApp, proxyApp } = createAppContext({ logger });
   return startServers({ authApp, proxyApp, logger, debug });
 }
@@ -122,5 +244,9 @@ function resolveServe(
 }
 
 if (import.meta.main) {
-  startApplication();
+  startApplication().catch((error) => {
+    console.error("startup_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
