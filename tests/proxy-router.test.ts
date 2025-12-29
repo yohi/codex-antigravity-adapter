@@ -212,6 +212,23 @@ describe("Proxy router", () => {
     ]);
   });
 
+  it("returns the injected model catalog from /v1/models", async () => {
+    const catalog = createTestCatalog(["custom-a", "custom-b"]);
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+      modelCatalog: catalog,
+    });
+
+    const response = await app.request("http://localhost/v1/models");
+    expect(response.status).toBe(200);
+
+    const payload = await response.json();
+    expect(payload).toEqual({
+      object: "list",
+      data: catalog.models,
+    });
+  });
+
   it("returns 404 for unknown endpoints", async () => {
     const app = createProxyApp({
       transformService: createTransformServiceStub(),

@@ -100,16 +100,10 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
   });
 
   app.get("/v1/models", (c) => {
-    const created = Math.floor(Date.now() / 1000);
     return c.json(
       {
         object: "list",
-        data: DEFAULT_FIXED_MODEL_IDS.map((id) => ({
-          id,
-          object: "model",
-          created,
-          owned_by: "antigravity",
-        })),
+        data: modelCatalog.models,
       },
       200
     );
