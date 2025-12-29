@@ -467,4 +467,101 @@ describe("ModelSettingsService", () => {
       await rm(outsideDir, { recursive: true, force: true });
     }
   });
+
+  it("rejects unsafe custom model paths with parent traversal", async () => {
+    const { entries, logger } = createTestLogger();
+
+    const service = createModelSettingsService();
+    const catalog = await service.load({
+      fixedModelIds: ["fixed-model"],
+      customModelPaths: ["../custom-models.json"],
+      logger,
+      now: () => 1_700_000_888_000,
+    });
+
+    expect(catalog.sources.file).toBe(0);
+    expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.level === "warn" &&
+          entry.message.includes("rejecting unsafe path")
+      )
+    ).toBe(true);
+  });
+
+  it("rejects absolute custom model paths even if the file exists", async () => {
+    const { entries, logger } = createTestLogger();
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-abs-")
+    );
+
+    try {
+      const filePath = path.join(tempDir, "custom-models.json");
+      await writeFile(
+        filePath,
+        JSON.stringify({ models: ["file-model"] }),
+        "utf8"
+      );
+
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        customModelPaths: [filePath],
+        logger,
+        now: () => 1_700_000_999_000,
+      });
+
+      expect(catalog.sources.file).toBe(0);
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("rejecting unsafe path") &&
+            entry.context?.filePath === filePath
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not include secret-like values in file parse error logs", async () => {
+    const { entries, logger } = createTestLogger();
+    const cwd = process.cwd();
+    const tempDir = await mkdtemp(path.join(cwd, "antigravity-models-"));
+    const secret = "sk-proj-abcdef123456";
+
+    try {
+      const filePath = path.join(tempDir, "custom-models.json");
+      await writeFile(
+        filePath,
+        `{"models": ["${secret}"]`,
+        "utf8"
+      );
+
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        customModelPaths: [path.relative(cwd, filePath)],
+        logger,
+        now: () => 1_700_001_111_000,
+      });
+
+      expect(catalog.sources.file).toBe(0);
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+      const errorEntries = entries.filter((entry) => entry.level === "error");
+      expect(errorEntries.length).toBeGreaterThan(0);
+      const payloads = errorEntries.map((entry) =>
+        JSON.stringify({
+          message: entry.message,
+          context: entry.context ?? {},
+        })
+      );
+      expect(payloads.some((payload) => payload.includes(secret))).toBe(false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });

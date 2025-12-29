@@ -117,6 +117,7 @@ export function parseEnvModels(value: string | undefined, logger: Logger): strin
   if (!value) return [];
   const trimmed = value.trim();
   if (!trimmed) return [];
+  const redactedValue = redactSensitiveValue(trimmed);
 
   let items: unknown[];
   if (trimmed.startsWith("[")) {
@@ -125,7 +126,7 @@ export function parseEnvModels(value: string | undefined, logger: Logger): strin
       const parsed = JSON.parse(trimmed);
       if (!Array.isArray(parsed)) {
         logger.warn("parseEnvModels: JSON value is not an array, falling back to CSV", {
-          value: trimmed,
+          value: redactedValue,
         });
         items = trimmed.split(",");
       } else {
@@ -134,7 +135,7 @@ export function parseEnvModels(value: string | undefined, logger: Logger): strin
     } catch (error) {
       // JSON.parseが失敗した場合、カンマ区切り文字列としてフォールバック
       logger.warn("parseEnvModels: JSON.parse failed, falling back to CSV", {
-        value: trimmed,
+        value: redactedValue,
         error: error instanceof Error ? error.message : String(error),
       });
       items = trimmed.split(",");
@@ -151,7 +152,7 @@ export function parseEnvModels(value: string | undefined, logger: Logger): strin
 
   if (cleaned.length === 0) {
     logger.warn("parseEnvModels: no valid model IDs after parsing", {
-      value: trimmed,
+      value: redactedValue,
     });
   }
 
@@ -312,4 +313,10 @@ export function isUnsafePath(filePath: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function redactSensitiveValue(value: string): string {
+  return value.replace(/sk-(proj-)?[a-zA-Z0-9-_]+/g, (_match, proj) =>
+    proj ? "sk-proj-***" : "sk-***"
+  );
 }

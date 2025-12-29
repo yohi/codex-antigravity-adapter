@@ -47,6 +47,22 @@ describe("parseEnvModels", () => {
     expect(entries.some((entry) => entry.level === "warn")).toBe(true);
   });
 
+  it("redacts secret-like values in warning logs", () => {
+    const { entries, logger } = createTestLogger();
+    const secret = "sk-proj-1234567890";
+
+    parseEnvModels(`[${secret}]`, logger);
+
+    const warning = entries.find((entry) => entry.level === "warn");
+    expect(warning).toBeDefined();
+    const payload = JSON.stringify({
+      message: warning?.message,
+      context: warning?.context ?? {},
+    });
+    expect(payload).not.toContain(secret);
+    expect(payload).toContain("sk-proj-***");
+  });
+
   it("filters empty or whitespace-only IDs", () => {
     const { logger } = createTestLogger();
 
