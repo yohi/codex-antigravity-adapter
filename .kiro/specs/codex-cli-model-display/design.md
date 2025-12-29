@@ -63,6 +63,7 @@ graph TB
 - Domain/feature boundaries: Config は設定読み込みと統合、Proxy は HTTP 応答のみ
 - Existing patterns preserved: `createProxyApp` を中心とした DI、`config` モジュールの分離
 - New components rationale: `ModelSettingsService` で設定読み込みを一元化する
+- Composition root: 起動時に `ModelSettingsService` を非同期ロードし、`ModelCatalog` を `createProxyApp` に注入する
 - Steering compliance: `structure.md` の DI 方針と `tech.md` の Bun/TypeScript 標準に準拠
 
 ## Technology Stack
@@ -83,14 +84,14 @@ sequenceDiagram
     participant ProxyRouter
 
     Main->>ModelSettings: load model settings
-    ModelSettings->>Env: read ANTIGRAVITY_ADDITIONAL_MODELS
     ModelSettings->>File: read custom models file
+    ModelSettings->>Env: read ANTIGRAVITY_ADDITIONAL_MODELS
     ModelSettings-->>Main: ModelCatalog
     Main->>ProxyRouter: createProxyApp with ModelCatalog
     ProxyRouter-->>ProxyRouter: serve GET v1 models
 ```
 
-起動時に一度だけ設定を読み込み、`ModelCatalog` を DI で注入する。API リクエストごとのファイル I/O は発生しない。
+起動時に一度だけ設定を読み込み、`ModelCatalog` を DI で注入する。設定ファイルの探索順は `cwd/custom-models.json` → `.codex/custom-models.json` とし、最初に見つかった 1 件のみを採用する。API リクエストごとのファイル I/O は発生しない。
 
 ## Components and Interfaces
 
@@ -112,7 +113,7 @@ sequenceDiagram
 **Responsibilities & Constraints**
 - 起動時に一度だけモデル設定を読み込み、結果を返す
 - 環境変数は JSON 配列 → カンマ区切りの順に解釈する
-- 設定ファイルは `custom-models.json` を固定パスで探索する
+- 設定ファイルは `cwd/custom-models.json` → `.codex/custom-models.json` の順で探索する
 - 重複は ID ベースで排除し、`env > file > fixed` の優先順位を保つ
 
 **Dependencies**
@@ -164,7 +165,7 @@ interface ModelSettingsService {
   - `AvailableModel.object` は常に "model"
 
 **Implementation Notes**
-- Integration: 起動時に `load` を呼び出し、`ModelCatalog` を `createProxyApp` に注入する
+- Integration: `startApplication`/`createAppContext` を非同期化し、`load` 完了後に `createProxyApp` へ `ModelCatalog` を注入する
 - Validation: `custom-models.json` は `models: string[]` のみ許容し、空文字や空白のみの ID は除外する
 - Risks: 起動フローの非同期化により初期化順が崩れないようにする
 
@@ -201,7 +202,7 @@ type ModelsListResponse = {
 ```
 
 **Implementation Notes**
-- Integration: `FIXED_MODEL_IDS` の直接参照を `ModelCatalog` の参照に置き換える
+- Integration: `createProxyApp` の引数に `modelCatalog` を追加し、`FIXED_MODEL_IDS` の直接参照を排除する
 - Validation: レスポンス形式は既存実装と同一
 - Risks: モデルリストが空でも OpenAI 互換形式を維持する
 
@@ -235,6 +236,7 @@ type ModelsListResponse = {
   "models": ["custom-model-a", "custom-model-b"]
 }
 ```
+探索順: `cwd/custom-models.json` → `.codex/custom-models.json`（先に見つかった 1 件のみ採用）。
 
 **環境変数形式**
 ```bash
