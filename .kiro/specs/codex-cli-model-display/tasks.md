@@ -117,7 +117,7 @@
   - _Requirements: 設計のセキュリティ要件_
 
 - [ ] 5. ドキュメント更新とエンドツーエンド検証
-- [ ] 5.1 READMEに新しい環境変数とモデル追加手順を追加
+- [x] 5.1 READMEに新しい環境変数とモデル追加手順を追加
   - 環境変数 `ANTIGRAVITY_ADDITIONAL_MODELS` の使い方（JSON配列形式とカンマ区切り形式）を説明
   - 設定ファイル（`custom-models.json` および `.codex/custom-models.json`）の使い方を説明
   - 設定の優先順位（env > file > fixed）を明記
