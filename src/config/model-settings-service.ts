@@ -113,7 +113,7 @@ async function loadModelSettings(
   };
 }
 
-function parseEnvModels(value: string | undefined, logger: Logger): string[] {
+export function parseEnvModels(value: string | undefined, logger: Logger): string[] {
   if (!value) return [];
   const trimmed = value.trim();
   if (!trimmed) return [];
