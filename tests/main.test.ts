@@ -2,7 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 
 import type { Logger } from "../src/logging";
-import { STARTUP_BANNER, startServers } from "../src/main";
+import { NOOP_LOGGER } from "../src/logging";
+import type { ModelSettingsService } from "../src/config/model-settings-service";
+import { STARTUP_BANNER, startApplication, startServers } from "../src/main";
 
 function createLogCollector() {
   const entries: Array<{
@@ -77,5 +79,80 @@ describe("main", () => {
     signalHandlers.SIGINT();
     expect(authStopCalls).toBe(1);
     expect(proxyStopCalls).toBe(1);
+  });
+});
+
+describe("startApplication PORT parsing", () => {
+  const mockModelSettingsService: ModelSettingsService = {
+    load: async () => ({
+      models: [
+        { id: "test-model", object: "model", created: 1234567890, owned_by: "test" }
+      ],
+      sources: { fixed: 1, file: 0, env: 0 }
+    })
+  };
+
+  /**
+   * Helper to test PORT parsing with automatic environment cleanup
+   */
+  async function testPortParsing(
+    portValue: string | undefined,
+    expectedPort: number | undefined
+  ) {
+    const originalPORT = process.env.PORT;
+    try {
+      if (portValue === undefined) {
+        delete process.env.PORT;
+      } else {
+        process.env.PORT = portValue;
+      }
+
+      let capturedPort: number | undefined;
+      await startApplication({
+        logger: NOOP_LOGGER,
+        modelSettingsService: mockModelSettingsService,
+        startAuthServer: () => ({ stop: () => {} }),
+        startProxyServer: (_, options) => {
+          capturedPort = options?.port;
+          return { stop: () => {} };
+        }
+      });
+
+      expect(capturedPort).toBe(expectedPort);
+    } finally {
+      if (originalPORT !== undefined) {
+        process.env.PORT = originalPORT;
+      } else {
+        delete process.env.PORT;
+      }
+    }
+  }
+
+  it("parses valid PORT with radix 10", async () => {
+    await testPortParsing("3000", 3000);
+  });
+
+  it("falls back to undefined for invalid PORT (out of range low)", async () => {
+    await testPortParsing("0", undefined);
+  });
+
+  it("falls back to undefined for invalid PORT (out of range high)", async () => {
+    await testPortParsing("70000", undefined);
+  });
+
+  it("falls back to undefined for non-numeric PORT", async () => {
+    await testPortParsing("abc", undefined);
+  });
+
+  it("falls back to undefined for decimal PORT", async () => {
+    await testPortParsing("12.34", undefined);
+  });
+
+  it("falls back to undefined for empty PORT", async () => {
+    await testPortParsing("", undefined);
+  });
+
+  it("uses undefined when PORT is not set", async () => {
+    await testPortParsing(undefined, undefined);
   });
 });

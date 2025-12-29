@@ -3,6 +3,12 @@ import type { Hono } from "hono";
 import { createAuthApp, startAuthServer, type AuthServerOptions } from "./auth/auth-router";
 import { OAuthAuthService } from "./auth/auth-service";
 import { FileTokenStore } from "./auth/token-store";
+import {
+  createModelSettingsService,
+  DEFAULT_FIXED_MODEL_IDS,
+  type ModelCatalog,
+  type ModelSettingsService,
+} from "./config/model-settings-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
@@ -30,8 +36,9 @@ export function initializeRuntime(): { sessionId: string } {
   return { sessionId: SESSION_ID };
 }
 
-export function createAppContext(options: { logger?: Logger } = {}) {
+export function createAppContext(options: { logger?: Logger; modelCatalog?: ModelCatalog } = {}) {
   const logger = options.logger ?? NOOP_LOGGER;
+  const modelCatalog = options.modelCatalog;
   initializeRuntime();
 
   const tokenStore = new FileTokenStore({ logger });
@@ -39,7 +46,7 @@ export function createAppContext(options: { logger?: Logger } = {}) {
   const requester = createAntigravityRequester({ logger });
   const transformService = createTransformService({ tokenStore, requester });
   const authApp = createAuthApp(authService);
-  const proxyApp = createProxyApp({ transformService });
+  const proxyApp = createProxyApp({ transformService, modelCatalog });
 
   return {
     authApp,
@@ -86,12 +93,174 @@ export function startServers(options: StartServersOptions) {
   return { authServer, proxyServer, shutdown };
 }
 
-export function startApplication(options: { debug?: boolean; logger?: Logger } = {}) {
+type LoadModelCatalogOptions = {
+  logger: Logger;
+  modelSettingsService?: ModelSettingsService;
+  fixedModelIds?: readonly string[];
+  now?: () => number;
+};
+
+type CatalogLogEntry = {
+  level: "warn" | "error";
+  message: string;
+};
+
+export async function loadModelCatalog(
+  options: LoadModelCatalogOptions
+): Promise<ModelCatalog> {
+  const baseLogger = options.logger;
+  const modelSettingsService =
+    options.modelSettingsService ?? createModelSettingsService();
+  const fixedModelIds = options.fixedModelIds ?? DEFAULT_FIXED_MODEL_IDS;
+  const now = options.now ?? (() => Date.now());
+  const { logger, entries } = createCapturingLogger(baseLogger);
+
+  try {
+    const catalog = await modelSettingsService.load({
+      logger,
+      fixedModelIds,
+      now,
+    });
+    const errors = entries.map((entry) => ({
+      level: entry.level,
+      message: entry.message,
+    }));
+    if (errors.length === 0) {
+      baseLogger.info("Model catalog loaded successfully", {
+        sources: catalog.sources,
+        totalModels: catalog.models.length,
+      });
+    } else {
+      baseLogger.info("Model catalog loaded with partial errors", {
+        sources: catalog.sources,
+        totalModels: catalog.models.length,
+        errors,
+      });
+    }
+    return catalog;
+  } catch (error) {
+    const fallbackCatalog = buildFixedModelCatalog(fixedModelIds, now);
+    baseLogger.warn("Model catalog loaded with errors, using fixed models only", {
+      sources: fallbackCatalog.sources,
+      totalModels: fallbackCatalog.models.length,
+      errors: [
+        {
+          level: "error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    });
+    return fallbackCatalog;
+  }
+}
+
+function createCapturingLogger(baseLogger: Logger): {
+  logger: Logger;
+  entries: CatalogLogEntry[];
+} {
+  const entries: CatalogLogEntry[] = [];
+  const logger: Logger = {
+    debug: (message, context) => baseLogger.debug(message, context),
+    info: (message, context) => baseLogger.info(message, context),
+    warn: (message, context) => {
+      entries.push({ level: "warn", message });
+      baseLogger.warn(message, context);
+    },
+    error: (message, context) => {
+      entries.push({ level: "error", message });
+      baseLogger.error(message, context);
+    },
+  };
+
+  return { logger, entries };
+}
+
+function buildFixedModelCatalog(
+  fixedModelIds: readonly string[],
+  now: () => number
+): ModelCatalog {
+  const created = Math.floor(now() / 1000);
+  return {
+    models: fixedModelIds.map((id) => ({
+      id,
+      object: "model",
+      created,
+      owned_by: "antigravity",
+    })),
+    sources: {
+      fixed: fixedModelIds.length,
+      file: 0,
+      env: 0,
+    },
+  };
+}
+
+/**
+ * Parses and validates a port number from a string value.
+ * Returns the port number if valid (1-65535), otherwise undefined.
+ *
+ * @param value - The string value to parse
+ * @returns A valid port number or undefined
+ */
+function parsePort(value: string | undefined): number | undefined {
+  if (!value || value.trim() === "") {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+
+  // Reject strings that don't represent valid integers (e.g., decimals, non-numeric)
+  // Use a regex to ensure the string contains only digits
+  if (!/^\d+$/.test(trimmed)) {
+    return undefined;
+  }
+
+  const parsed = parseInt(trimmed, 10);
+
+  // Check if parsing was successful and the result is a finite integer
+  if (!Number.isFinite(parsed) || !Number.isInteger(parsed)) {
+    return undefined;
+  }
+
+  // Validate TCP port range (1-65535)
+  if (parsed < 1 || parsed > 65535) {
+    return undefined;
+  }
+
+  return parsed;
+}
+
+export type StartApplicationOptions = {
+  debug?: boolean;
+  logger?: Logger;
+  modelSettingsService?: ModelSettingsService;
+  fixedModelIds?: readonly string[];
+  now?: () => number;
+  startAuthServer?: typeof startAuthServer;
+  startProxyServer?: typeof startProxyServer;
+};
+
+export async function startApplication(options: StartApplicationOptions = {}) {
   const debug = options.debug ?? isDebugEnabled(process.env.ANTIGRAVITY_DEBUG_LOGS);
   const logger = options.logger ?? createLogger({ debug });
   logger.info(STARTUP_BANNER, { status: "starting" });
-  const { authApp, proxyApp } = createAppContext({ logger });
-  return startServers({ authApp, proxyApp, logger, debug });
+  const modelCatalog = await loadModelCatalog({
+    logger,
+    modelSettingsService: options.modelSettingsService,
+    fixedModelIds: options.fixedModelIds,
+    now: options.now,
+  });
+  const { authApp, proxyApp } = createAppContext({ logger, modelCatalog });
+  const proxyPort = parsePort(process.env.PORT);
+  return startServers({
+    authApp,
+    proxyApp,
+    logger,
+    debug,
+    proxyOptions: { port: proxyPort },
+    startAuthServer: options.startAuthServer,
+    startProxyServer: options.startProxyServer,
+  });
 }
 
 type ServeOptions = {
@@ -122,5 +291,9 @@ function resolveServe(
 }
 
 if (import.meta.main) {
-  startApplication();
+  startApplication().catch((error) => {
+    console.error("startup_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
