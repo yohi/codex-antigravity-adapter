@@ -76,14 +76,15 @@ async function loadModelSettings(
   );
   const created = Math.floor(now() / 1000);
 
+  const sources: ModelSourceCounts = {
+    env: envModels.length,
+    file: fileModels.length,
+    fixed: fixedModelIds.length,
+  };
+
   // 重複排除: first-seen-wins（env → file → fixed の優先順位）
   const seen = new Set<string>();
   const models: AvailableModel[] = [];
-  const sources: ModelSourceCounts = {
-    env: 0,
-    file: 0,
-    fixed: 0,
-  };
 
   // env, file, fixed の順序で処理
   const sourceData = [
@@ -102,7 +103,6 @@ async function loadModelSettings(
           created,
           owned_by: "antigravity",
         });
-        sources[key]++;
       }
     }
   }
