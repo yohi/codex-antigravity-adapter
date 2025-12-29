@@ -36,8 +36,9 @@ export function initializeRuntime(): { sessionId: string } {
   return { sessionId: SESSION_ID };
 }
 
-export function createAppContext(options: { logger?: Logger } = {}) {
+export function createAppContext(options: { logger?: Logger; modelCatalog?: ModelCatalog } = {}) {
   const logger = options.logger ?? NOOP_LOGGER;
+  const modelCatalog = options.modelCatalog;
   initializeRuntime();
 
   const tokenStore = new FileTokenStore({ logger });
@@ -45,7 +46,7 @@ export function createAppContext(options: { logger?: Logger } = {}) {
   const requester = createAntigravityRequester({ logger });
   const transformService = createTransformService({ tokenStore, requester });
   const authApp = createAuthApp(authService);
-  const proxyApp = createProxyApp({ transformService });
+  const proxyApp = createProxyApp({ transformService, modelCatalog });
 
   return {
     authApp,
@@ -206,14 +207,21 @@ export async function startApplication(options: StartApplicationOptions = {}) {
   const debug = options.debug ?? isDebugEnabled(process.env.ANTIGRAVITY_DEBUG_LOGS);
   const logger = options.logger ?? createLogger({ debug });
   logger.info(STARTUP_BANNER, { status: "starting" });
-  await loadModelCatalog({
+  const modelCatalog = await loadModelCatalog({
     logger,
     modelSettingsService: options.modelSettingsService,
     fixedModelIds: options.fixedModelIds,
     now: options.now,
   });
-  const { authApp, proxyApp } = createAppContext({ logger });
-  return startServers({ authApp, proxyApp, logger, debug });
+  const { authApp, proxyApp } = createAppContext({ logger, modelCatalog });
+  const proxyPort = process.env.PORT ? parseInt(process.env.PORT) : undefined;
+  return startServers({
+    authApp,
+    proxyApp,
+    logger,
+    debug,
+    proxyOptions: { port: proxyPort },
+  });
 }
 
 type ServeOptions = {
