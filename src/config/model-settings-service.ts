@@ -1,3 +1,6 @@
+import { realpath } from "node:fs/promises";
+import path from "node:path";
+
 import type { Logger } from "../logging";
 import { NOOP_LOGGER } from "../logging";
 
@@ -177,10 +180,36 @@ async function readFileModels(
 
   if (candidatePaths.length === 0) return [];
 
+  let cwdRealpath: string | null = null;
+  if (!skipPathSafetyCheck) {
+    try {
+      cwdRealpath = await realpath(process.cwd());
+    } catch (error) {
+      logger.error("Failed to resolve cwd realpath for custom models safety check", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
   const existingPaths: string[] = [];
   for (const filePath of candidatePaths) {
     try {
       if (await Bun.file(filePath).exists()) {
+        if (!skipPathSafetyCheck && cwdRealpath) {
+          const resolvedPath = await resolveRealPath(filePath, logger);
+          if (!resolvedPath) {
+            continue;
+          }
+          if (!isPathWithinBase(resolvedPath, cwdRealpath)) {
+            logger.warn("readFileModels: rejecting path outside cwd", {
+              filePath,
+              resolvedPath,
+              cwd: cwdRealpath,
+            });
+            continue;
+          }
+        }
         existingPaths.push(filePath);
       }
     } catch (error) {
@@ -244,6 +273,29 @@ async function readFileModels(
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
   return cleaned;
+}
+
+async function resolveRealPath(
+  filePath: string,
+  logger: Logger
+): Promise<string | null> {
+  try {
+    return await realpath(filePath);
+  } catch (error) {
+    logger.error("Failed to resolve custom models file realpath", {
+      filePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function isPathWithinBase(targetPath: string, basePath: string): boolean {
+  if (targetPath === basePath) return true;
+  const baseWithSep = basePath.endsWith(path.sep)
+    ? basePath
+    : `${basePath}${path.sep}`;
+  return targetPath.startsWith(baseWithSep);
 }
 
 export function isUnsafePath(filePath: string): boolean {
