@@ -6,12 +6,13 @@
 /
 ├── src/
 │   ├── auth/           # Authentication logic (OAuth, Token Storage)
-│   ├── config/         # Configuration & Constants
+│   ├── config/         # Configuration & Constants (Model Catalog)
 │   ├── proxy/          # Proxy server & Client logic
 │   ├── transformer/    # Request/Response translation (OpenAI <-> Antigravity)
 │   ├── logging.ts      # Shared logging utilities
 │   └── main.ts         # Entry point & Composition root
 ├── tests/              # Test files (mirroring src/)
+├── dist/               # Build artifacts (ignored by git)
 ├── .codex/             # Prompt templates (ignored by git)
 └── .kiro/              # Project knowledge & specs
 ```
@@ -21,8 +22,10 @@
 ### Service Modules
 Features are grouped by domain (`auth`, `proxy`). Each module typically exposes:
 - **Router:** Hono app definition (`*-router.ts`).
-- **Service:** Business logic (`*-service.ts`).
+- **Service:** Business logic (`*-service.ts`, `*-service.ts`).
 - **Store:** Data persistence (`*-store.ts`).
+
+Example: `ModelSettingsService` in `src/config` handles dynamic model loading.
 
 ### Dependency Injection
 Components are assembled in `src/main.ts`. Functions like `createAppContext` and `startServers` handle wiring, enabling easier testing and modularity.

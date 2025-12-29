@@ -12,6 +12,9 @@
 - **Standard Fetch:** Uses standard Web API `fetch`, `Request`, and `Response` objects throughout.
 - **No External Request Libs:** Avoids `axios` or `node-fetch`; uses native `fetch`.
 - **Functional Composition:** Prefers factory functions (`createApp`, `createService`) over heavy class inheritance, though classes are used for stateful services (Stores).
+- **Configuration:**
+  - Port is configurable via `PORT` environment variable (default: 3000).
+  - Model catalog can be extended via `ANTIGRAVITY_ADDITIONAL_MODELS` (CSV or JSON array) or `.codex/custom-models.json`.
 
 ## Development Conventions
 - **Imports:** Use explicit relative paths with extensions (e.g., `./auth-router.ts` implied, or specific files if needed).
