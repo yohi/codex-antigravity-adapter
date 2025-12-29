@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -267,6 +267,48 @@ describe("ModelSettingsService", () => {
       ).toBe(true);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects symlinked custom models that resolve outside cwd", async () => {
+    const { entries, logger } = createTestLogger();
+    const cwd = process.cwd();
+    const tempDir = await mkdtemp(path.join(cwd, "antigravity-models-"));
+    const outsideDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-outside-")
+    );
+
+    try {
+      const targetFile = path.join(outsideDir, "custom-models.json");
+      await writeFile(
+        targetFile,
+        JSON.stringify({ models: ["outside-model"] }),
+        "utf8"
+      );
+
+      const symlinkPath = path.join(tempDir, "custom-models.json");
+      await symlink(targetFile, symlinkPath);
+
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        customModelPaths: [path.relative(cwd, symlinkPath)],
+        logger,
+        now: () => 1_700_000_777_000,
+      });
+
+      expect(catalog.sources.file).toBe(0);
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("rejecting path outside cwd")
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+      await rm(outsideDir, { recursive: true, force: true });
     }
   });
 });
