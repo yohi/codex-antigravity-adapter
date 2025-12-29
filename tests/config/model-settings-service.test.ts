@@ -160,29 +160,34 @@ describe("ModelSettingsService", () => {
 
   it("prefers ./custom-models.json over .codex/custom-models.json and logs when both exist", async () => {
     const { entries, logger } = createTestLogger();
-    const cwdFile = path.join(process.cwd(), "custom-models.json");
-    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
-    const cwdBackup = await readFileIfExists(cwdFile);
-    const codexBackup = await readFileIfExists(codexFile);
-
-    await writeFile(
-      cwdFile,
-      JSON.stringify({ models: ["cwd-model"] }),
-      "utf8"
-    );
-    await mkdir(path.dirname(codexFile), { recursive: true });
-    await writeFile(
-      codexFile,
-      JSON.stringify({ models: ["codex-model"] }),
-      "utf8"
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
     );
 
     try {
+      const cwdFile = path.join(tempDir, "custom-models.json");
+      const codexDir = path.join(tempDir, ".codex");
+      const codexFile = path.join(codexDir, "custom-models.json");
+
+      await writeFile(
+        cwdFile,
+        JSON.stringify({ models: ["cwd-model"] }),
+        "utf8"
+      );
+      await mkdir(codexDir, { recursive: true });
+      await writeFile(
+        codexFile,
+        JSON.stringify({ models: ["codex-model"] }),
+        "utf8"
+      );
+
       const service = createModelSettingsService();
       const catalog = await service.load({
         fixedModelIds: [],
+        customModelPaths: [cwdFile, codexFile],
         logger,
         now: () => 1_700_000_444_000,
+        skipPathSafetyCheck: true,
       });
 
       expect(catalog.models.map((model) => model.id)).toEqual(["cwd-model"]);
@@ -190,31 +195,31 @@ describe("ModelSettingsService", () => {
         entries.some(
           (entry) =>
             entry.level === "info" &&
-            entry.message.includes("Loaded custom models from ./custom-models.json")
+            entry.message.includes(`Loaded custom models from ${cwdFile}`)
         )
       ).toBe(true);
     } finally {
-      await restoreFile(cwdFile, cwdBackup);
-      await restoreFile(codexFile, codexBackup);
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("logs info and skips file models when no custom models file is found", async () => {
     const { entries, logger } = createTestLogger();
-    const cwdFile = path.join(process.cwd(), "custom-models.json");
-    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
-    const cwdBackup = await readFileIfExists(cwdFile);
-    const codexBackup = await readFileIfExists(codexFile);
-
-    await rm(cwdFile, { force: true });
-    await rm(codexFile, { force: true });
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
 
     try {
+      const cwdFile = path.join(tempDir, "custom-models.json");
+      const codexFile = path.join(tempDir, ".codex", "custom-models.json");
+
       const service = createModelSettingsService();
       const catalog = await service.load({
         fixedModelIds: ["fixed-model"],
+        customModelPaths: [cwdFile, codexFile],
         logger,
         now: () => 1_700_000_555_000,
+        skipPathSafetyCheck: true,
       });
 
       expect(catalog.sources.file).toBe(0);
@@ -227,27 +232,28 @@ describe("ModelSettingsService", () => {
         )
       ).toBe(true);
     } finally {
-      await restoreFile(cwdFile, cwdBackup);
-      await restoreFile(codexFile, codexBackup);
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 
   it("logs errors and skips file models when custom-models.json is invalid", async () => {
     const { entries, logger } = createTestLogger();
-    const cwdFile = path.join(process.cwd(), "custom-models.json");
-    const codexFile = path.join(process.cwd(), ".codex", "custom-models.json");
-    const cwdBackup = await readFileIfExists(cwdFile);
-    const codexBackup = await readFileIfExists(codexFile);
-
-    await writeFile(cwdFile, "{bad json", "utf8");
-    await rm(codexFile, { force: true });
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
 
     try {
+      const cwdFile = path.join(tempDir, "custom-models.json");
+
+      await writeFile(cwdFile, "{bad json", "utf8");
+
       const service = createModelSettingsService();
       const catalog = await service.load({
         fixedModelIds: ["fixed-model"],
+        customModelPaths: [cwdFile],
         logger,
         now: () => 1_700_000_666_000,
+        skipPathSafetyCheck: true,
       });
 
       expect(catalog.sources.file).toBe(0);
@@ -260,8 +266,7 @@ describe("ModelSettingsService", () => {
         )
       ).toBe(true);
     } finally {
-      await restoreFile(cwdFile, cwdBackup);
-      await restoreFile(codexFile, codexBackup);
+      await rm(tempDir, { recursive: true, force: true });
     }
   });
 });
