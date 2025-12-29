@@ -22,7 +22,7 @@
 ### Service Modules
 Features are grouped by domain (`auth`, `proxy`). Each module typically exposes:
 - **Router:** Hono app definition (`*-router.ts`).
-- **Service:** Business logic (`*-service.ts`, `*-service.ts`).
+- **Service:** Business logic (`*-service.ts`).
 - **Store:** Data persistence (`*-store.ts`).
 
 Example: `ModelSettingsService` in `src/config` handles dynamic model loading.
