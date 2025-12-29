@@ -96,6 +96,55 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 
    詳細な設定オプションについては、[公式ドキュメント: Configuring Codex](https://developers.openai.com/codex/local-config/) を参照してください。
 
+## モデル一覧のカスタマイズ
+
+デフォルトで提供されるモデル以外を利用したい場合、環境変数または設定ファイルを使用してモデルIDを追加できます。
+追加されたモデルは `/v1/models` エンドポイントで返され、Codex CLI から利用可能になります。
+
+### 設定方法
+
+以下のいずれか、または両方の方法でモデルを追加できます。
+
+#### 1. 環境変数 (`ANTIGRAVITY_ADDITIONAL_MODELS`)
+
+`.env` ファイルまたは環境変数で指定します。
+
+**JSON配列形式（推奨）:**
+```bash
+ANTIGRAVITY_ADDITIONAL_MODELS='["gemini-1.5-pro-latest", "claude-3-5-sonnet-20240620"]'
+```
+
+**カンマ区切り形式:**
+```bash
+ANTIGRAVITY_ADDITIONAL_MODELS="gemini-1.5-pro-latest,claude-3-5-sonnet-20240620"
+```
+
+#### 2. 設定ファイル (`custom-models.json`)
+
+プロジェクトルート（`./`）または `.codex/` ディレクトリに `custom-models.json` を配置します。
+
+**`custom-models.json` の例:**
+```json
+{
+  "models": [
+    "gemini-1.5-pro-latest",
+    "claude-3-5-sonnet-20240620",
+    "experimental-model-v1"
+  ]
+}
+```
+
+### 設定の優先順位
+
+複数の設定方法が併用された場合、以下の優先順位でマージされます（IDが重複した場合、優先度の高い設定が維持されます）。
+
+1. **環境変数** (`ANTIGRAVITY_ADDITIONAL_MODELS`) - 最高優先
+2. **設定ファイル** (`./custom-models.json` または `.codex/custom-models.json`)
+   - カレントディレクトリのファイルが優先されます
+3. **組み込みモデル** (ハードコードされたリスト) - 最低優先
+
+※ 設定ファイルや環境変数が無効な形式（不正なJSONなど）の場合、警告ログが出力され、その設定は無視されます（サーバーは起動を継続します）。
+
 ## 実行方法
 
 1. **サーバーの起動**
