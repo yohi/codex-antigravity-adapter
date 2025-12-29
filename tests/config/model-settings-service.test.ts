@@ -196,6 +196,124 @@ describe("ModelSettingsService", () => {
     expect(entries.some((entry) => entry.level === "warn")).toBe(true);
   });
 
+  it("returns empty env models when CSV contains only empty items", async () => {
+    process.env.ANTIGRAVITY_ADDITIONAL_MODELS = "  ,  ,   ";
+    const { entries, logger } = createTestLogger();
+
+    const service = createModelSettingsService();
+    const catalog = await service.load({
+      fixedModelIds: [],
+      customModelPaths: [],
+      logger,
+      now: () => 1_700_000_999_000,
+    });
+
+    expect(catalog.sources).toEqual({ fixed: 0, file: 0, env: 0 });
+    expect(catalog.models).toEqual([]);
+    expect(
+      entries.some(
+        (entry) =>
+          entry.level === "warn" &&
+          entry.message.includes("no valid model IDs")
+      )
+    ).toBe(true);
+  });
+
+  it("filters whitespace-only IDs from env and file sources", async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
+    const filePath = path.join(tempDir, "custom-models.json");
+
+    await writeFile(
+      filePath,
+      JSON.stringify({ models: [" file-model ", "  ", "", "file-model-b"] }),
+      "utf8"
+    );
+    process.env.ANTIGRAVITY_ADDITIONAL_MODELS = " env-model , , env-model-b ";
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: [],
+        customModelPaths: [filePath],
+        now: () => 1_700_000_123_000,
+        skipPathSafetyCheck: true,
+      });
+
+      expect(catalog.sources).toEqual({ fixed: 0, file: 2, env: 2 });
+      expect(catalog.models.map((model) => model.id)).toEqual([
+        "env-model",
+        "env-model-b",
+        "file-model",
+        "file-model-b",
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("handles empty custom-models.json by skipping file models", async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
+    const filePath = path.join(tempDir, "custom-models.json");
+
+    await writeFile(filePath, JSON.stringify({ models: [] }), "utf8");
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["fixed-model"],
+        customModelPaths: [filePath],
+        now: () => 1_700_000_124_000,
+        skipPathSafetyCheck: true,
+      });
+
+      expect(catalog.sources).toEqual({ fixed: 1, file: 0, env: 0 });
+      expect(catalog.models.map((model) => model.id)).toEqual(["fixed-model"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps merge order env > file > fixed when IDs overlap", async () => {
+    const tempDir = await mkdtemp(
+      path.join(os.tmpdir(), "antigravity-models-")
+    );
+    const filePath = path.join(tempDir, "custom-models.json");
+
+    await writeFile(
+      filePath,
+      JSON.stringify({ models: ["model-b", "model-c"] }),
+      "utf8"
+    );
+    process.env.ANTIGRAVITY_ADDITIONAL_MODELS = JSON.stringify([
+      "model-a",
+      "model-b",
+    ]);
+
+    try {
+      const service = createModelSettingsService();
+      const catalog = await service.load({
+        fixedModelIds: ["model-c", "model-d"],
+        customModelPaths: [filePath],
+        now: () => 1_700_000_125_000,
+        skipPathSafetyCheck: true,
+      });
+
+      expect(catalog.sources).toEqual({ fixed: 2, file: 2, env: 2 });
+      expect(catalog.models.map((model) => model.id)).toEqual([
+        "model-a",
+        "model-b",
+        "model-c",
+        "model-d",
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("prefers ./custom-models.json over .codex/custom-models.json and logs when both exist", async () => {
     const { entries, logger } = createTestLogger();
     const tempDir = await mkdtemp(
