@@ -172,7 +172,7 @@ sequenceDiagram
 | Intent | エイリアスマッピングの読み込みと参照を提供する |
 | Requirements | 1.1, 1.2, 1.3, 1.4 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
 - 起動時に `model-aliases.json` を読み込み、`ReadonlyMap<string, string>` として保持する
 - ファイル不存在時は info ログを出力し、空マップで継続する
 - JSON パース失敗時は warn ログを出力し、空マップで継続する
@@ -180,12 +180,12 @@ sequenceDiagram
 - 設定ファイルパスはプロジェクトルート直下の `model-aliases.json` に固定する
 - `isUnsafePath` と `realpath` によるシンボリックリンク対策を適用する（既存 `model-settings-service.ts` のパターンを踏襲）
 
-**Dependencies**
+##### Dependencies
 - Inbound: ModelRoutingService — ルーティング時の参照 (P0)
 - Outbound: Logger — ログ出力 (P1)
 - External: Bun file — ファイル読み込み (P1)
 
-**Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
+##### Contracts: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
 
 ##### Service Interface
 ```typescript
@@ -242,7 +242,7 @@ const AliasTagSchema = z.string().regex(/^@[a-zA-Z][a-zA-Z0-9_-]*$/);
 // }
 ```
 
-**Implementation Notes**
+##### Implementation Notes
 - Integration: `main.ts` の `startApplication` で非同期にロードし `createAppContext` に注入する
 - Validation: 
   - `isUnsafePath` で `..` や絶対パスを拒否
@@ -259,17 +259,17 @@ const AliasTagSchema = z.string().regex(/^@[a-zA-Z][a-zA-Z0-9_-]*$/);
 | Intent | 先頭エイリアスの検出と残りテキストの抽出 |
 | Requirements | 2.3, 4.1, 4.2, 5.2 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
 - コンテンツ先頭が `@` で始まらない場合は即時非検出とする
 - 既知エイリアスに完全一致し、直後が空白または終端の場合のみ検出する
 - 非検出時は入力文字列を変更しない（参照を維持）
 
-**Dependencies**
+##### Dependencies
 - Inbound: ModelRoutingService — ルーティング判定 (P0)
 - Outbound: -
 - External: -
 
-**Contracts**: Service [ ] / API [ ] / Event [ ] / Batch [ ] / State [ ]
+##### Contracts: Service [ ] / API [ ] / Event [ ] / Batch [ ] / State [ ]
 
 ##### Function Interface
 ```typescript
@@ -300,7 +300,7 @@ function detectAlias(
 - Invariants:
   - 純粋関数として副作用なし
 
-**Implementation Notes**
+##### Implementation Notes
 - Integration: `ModelRoutingService` が `knownAliases` を渡して利用する
 - Validation: 空白/終端条件を必須化する
 - Risks: エイリアスが意図しない先頭一致の場合は非検出
@@ -314,20 +314,20 @@ function detectAlias(
 | Intent | ルーティング決定、モデル切替、サニタイズを実行する |
 | Requirements | 2.1, 2.2, 3.1, 3.2, 3.3, 4.1, 4.2, 4.3, 4.4, 5.1, 5.3 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
 - 最新ユーザーメッセージのみを対象にエイリアス検出を行う
 - 検出されたエイリアスが未定義の場合は変更なしで返す
 - ルーティング適用時は必ず `debug` ログを出力する
 - `model` と対象メッセージ以外は変更しない
 - ルーティング処理中の例外はキャッチし、パススルーで継続する
 
-**Dependencies**
+##### Dependencies
 - Inbound: proxy-router — リクエスト処理 (P0)
 - Outbound: ModelAliasConfigService — エイリアス解決 (P0)
 - Outbound: Logger — ルーティングログ (P1)
 - External: -
 
-**Contracts**: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
+##### Contracts: Service [x] / API [ ] / Event [ ] / Batch [ ] / State [ ]
 
 ##### Service Interface
 ```typescript
@@ -372,7 +372,7 @@ function createModelRoutingService(
 - Invariants:
   - ユーザーメッセージが存在しない場合は無変更
 
-**Implementation Notes**
+##### Implementation Notes
 - Integration: `createProxyApp` に `modelRoutingService` を注入し、スキーマ検証後・`handleCompletion` 前に `route` を呼び出す
 - Validation: `findLastUserMessageIndex` により末尾から探索する
 - Risks: 既知エイリアスの更新は再起動が必要
@@ -384,12 +384,12 @@ function createModelRoutingService(
 | Intent | ルーティング適用位置を固定し、スキーマ変換を保護する |
 | Requirements | 2.4, 6.1, 6.2, 6.3, 6.4 |
 
-**Responsibilities & Constraints**
+##### Responsibilities & Constraints
 - `ChatCompletionRequestSchema.safeParse` 後、`transformService.handleCompletion` 前にルーティングを適用する
 - スキーマ変換ロジックは変更しない
 - ルーティングサービスは `CreateProxyAppOptions` 経由で注入する
 
-**Integration Point (proxy-router.ts 変更箇所)**
+##### Integration Point (proxy-router.ts 変更箇所)
 ```typescript
 // 現在の実装（L52-68）
 const parsed = ChatCompletionRequestSchema.safeParse(payload);
@@ -406,7 +406,7 @@ const result = normalizeTransformResult(
 );
 ```
 
-**Implementation Notes**
+##### Implementation Notes
 - Integration: `CreateProxyAppOptions` に `modelRoutingService?: ModelRoutingService` を追加
 - Validation: ルーティング有無に関わらず `transformService` の契約を維持する
 - Risks: ルーティング追加によるレスポンス遅延は軽微（Map 参照のみ）
@@ -440,7 +440,7 @@ const result = normalizeTransformResult(
 
 ### Data Contracts & Integration
 
-**API Data Transfer**
+#### API Data Transfer
 - 既存の OpenAI 互換リクエストに変更はない
 - 変換前後で `model` と対象ユーザーメッセージ以外は不変
 
