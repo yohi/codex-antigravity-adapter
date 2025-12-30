@@ -63,13 +63,13 @@ flowchart TD
     ModelAliasConfigService --> AliasFile
 ```
 
-**Middleware と Service の関係**:
+#### Middleware と Service の関係
 - 要件における「Dynamic Model Routing Middleware」は**論理的なルーティング段階**を指す
 - 実装では既存の Service Modules パターンに従い `ModelRoutingService` として提供する
 - `proxy-router.ts` のルートハンドラ内で、スキーマ検証後・`transformService.handleCompletion` 呼び出し前に `modelRoutingService.route()` を明示的に呼び出す
 - これにより Hono ミドルウェアチェーンへの新規追加なしに、処理順序を制御可能とする
 
-**Architecture Integration**:
+#### Architecture Integration
 - Selected pattern: プロキシハンドラ内でのサービス呼び出し（Hono middleware ではなく明示的呼び出し）
 - Domain/feature boundaries: 設定読み込みは Config 層、ルーティングは Proxy 層、検出は純粋関数として Utility 層に分離
 - Existing patterns preserved: Factory 関数の DI、スキーマ検証後の変換パイプライン
