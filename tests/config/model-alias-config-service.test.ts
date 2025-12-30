@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -50,6 +50,7 @@ describe("ModelAliasConfigService", () => {
 
       const service = await createModelAliasConfigService().loadAliases({
         filePath,
+        skipPathSafetyCheck: true,
       });
 
       expect(service.getTargetModel("@fast")).toBe("gemini-3-flash");
@@ -70,6 +71,7 @@ describe("ModelAliasConfigService", () => {
       const service = await createModelAliasConfigService().loadAliases({
         filePath,
         logger,
+        skipPathSafetyCheck: true,
       });
 
       expect(service.getAll().size).toBe(0);
@@ -96,6 +98,7 @@ describe("ModelAliasConfigService", () => {
       const service = await createModelAliasConfigService().loadAliases({
         filePath,
         logger,
+        skipPathSafetyCheck: true,
       });
 
       expect(service.getAll().size).toBe(0);
@@ -132,6 +135,7 @@ describe("ModelAliasConfigService", () => {
       const service = await createModelAliasConfigService().loadAliases({
         filePath,
         logger,
+        skipPathSafetyCheck: true,
       });
 
       expect(service.getAll().size).toBe(1);
@@ -149,6 +153,109 @@ describe("ModelAliasConfigService", () => {
       expect(invalidWarnings.length).toBe(4);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects absolute paths and logs warning", async () => {
+    const { entries, logger } = createTestLogger();
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-aliases-"));
+    const filePath = path.join(tempDir, "model-aliases.json");
+
+    try {
+      await writeFile(
+        filePath,
+        JSON.stringify({ "@fast": "gemini-3-flash" }),
+        "utf8"
+      );
+
+      const service = await createModelAliasConfigService().loadAliases({
+        filePath,
+        logger,
+      });
+
+      expect(service.getAll().size).toBe(0);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("unsafe path")
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects paths containing '..' and logs warning", async () => {
+    const { entries, logger } = createTestLogger();
+    const tempDir = await mkdtemp(path.join(process.cwd(), "antigravity-aliases-"));
+    const filePath = path.join(tempDir, "model-aliases.json");
+    const relativeDir = path.relative(process.cwd(), tempDir);
+    const unsafeRelativePath = `${relativeDir}${path.sep}..${path.sep}${path.basename(
+      tempDir
+    )}${path.sep}model-aliases.json`;
+
+    try {
+      await writeFile(
+        filePath,
+        JSON.stringify({ "@fast": "gemini-3-flash" }),
+        "utf8"
+      );
+
+      const service = await createModelAliasConfigService().loadAliases({
+        filePath: unsafeRelativePath,
+        logger,
+      });
+
+      expect(service.getAll().size).toBe(0);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("unsafe path")
+        )
+      ).toBe(true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects aliases file resolving outside cwd via symlink", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const { entries, logger } = createTestLogger();
+    const targetDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-aliases-"));
+    const targetFilePath = path.join(targetDir, "model-aliases.json");
+    const linkDir = await mkdtemp(path.join(process.cwd(), "antigravity-aliases-"));
+    const linkPath = path.join(linkDir, "model-aliases.json");
+    const relativeLinkPath = path.relative(process.cwd(), linkPath);
+
+    try {
+      await writeFile(
+        targetFilePath,
+        JSON.stringify({ "@fast": "gemini-3-flash" }),
+        "utf8"
+      );
+      await symlink(targetFilePath, linkPath);
+
+      const service = await createModelAliasConfigService().loadAliases({
+        filePath: relativeLinkPath,
+        logger,
+      });
+
+      expect(service.getAll().size).toBe(0);
+      expect(
+        entries.some(
+          (entry) =>
+            entry.level === "warn" &&
+            entry.message.includes("outside cwd")
+        )
+      ).toBe(true);
+    } finally {
+      await rm(linkDir, { recursive: true, force: true });
+      await rm(targetDir, { recursive: true, force: true });
     }
   });
 });
