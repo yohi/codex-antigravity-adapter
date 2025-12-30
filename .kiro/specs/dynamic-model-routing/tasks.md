@@ -6,7 +6,7 @@
 ---
 
 - [ ] 1. エイリアス設定読み込み機能の実装
-- [ ] 1.1 ModelAliasConfigService の基本構造を実装する
+- [x] 1.1 ModelAliasConfigService の基本構造を実装する
   - エイリアスマップを保持する内部状態を定義する
   - getTargetModel、hasAlias、listAliases、getAll メソッドのインターフェースを実装する
   - ファクトリ関数 createModelAliasConfigService の骨格を作成する
