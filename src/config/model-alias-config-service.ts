@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { Logger } from "../logging";
 import { NOOP_LOGGER } from "../logging";
+import { isUnsafePath } from "../utils/path-safety";
 
 export type AliasMap = ReadonlyMap<string, string>;
 
@@ -190,14 +191,4 @@ function isPathWithinBase(targetPath: string, basePath: string): boolean {
     ? basePath
     : `${basePath}${path.sep}`;
   return targetPath.startsWith(baseWithSep);
-}
-
-function isUnsafePath(filePath: string): boolean {
-  if (filePath.startsWith("/") || /^[a-zA-Z]:\\/.test(filePath)) {
-    return true;
-  }
-  if (filePath.includes("..")) {
-    return true;
-  }
-  return false;
 }
