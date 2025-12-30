@@ -24,4 +24,25 @@ describe("detectAlias", () => {
     expect(result.alias).toBe("@fast");
     expect(result.remainingContent).toBe("");
   });
+
+  it("does not detect partial alias matches", () => {
+    const result = detectAlias("@faster hello", new Set(["@fast"]));
+
+    expect(result.alias).toBeNull();
+    expect(result.remainingContent).toBe("@faster hello");
+  });
+
+  it("does not detect unknown aliases", () => {
+    const result = detectAlias("@unknown hello", new Set(["@fast"]));
+
+    expect(result.alias).toBeNull();
+    expect(result.remainingContent).toBe("@unknown hello");
+  });
+
+  it("returns the remaining content after removing alias and one space", () => {
+    const result = detectAlias("@fast hello world", new Set(["@fast"]));
+
+    expect(result.alias).toBe("@fast");
+    expect(result.remainingContent).toBe("hello world");
+  });
 });
