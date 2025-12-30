@@ -21,7 +21,7 @@
 1. When チャット補完リクエストを受信したとき, the Dynamic Model Routing Middleware shall 最新のユーザーメッセージの内容を検査すること。
 2. If ユーザーメッセージが存在しない場合, the Dynamic Model Routing Middleware shall リクエストを変更せずに転送すること。
 3. When ユーザーメッセージ内容が設定済みエイリアスタグで始まり、直後が空白または内容終端である場合, the Dynamic Model Routing Middleware shall 当該エイリアスを検出すること。
-4. If ユーザーメッセージ内容が配列の場合, the Dynamic Model Routing Middleware shall テキスト部分のみを検査し、非テキスト部分はスキップすること。
+4. The Dynamic Model Routing Middleware shall スキーマ検証後の文字列形式コンテンツに対してエイリアス検出を実行すること（配列形式は既存スキーマにより文字列に変換済み）。
 
 ### Requirement 3: モデルルーティングの決定
 **目的:** 開発者として、検出したエイリアスでリクエストのモデルを切り替えられるようにしたい。
@@ -47,5 +47,12 @@
 1. If エイリアスが検出されない場合, the Dynamic Model Routing Middleware shall リクエストを変更せずに転送すること。
 2. If ユーザーメッセージ内容が `@` で始まらない場合, the Dynamic Model Routing Middleware shall エイリアス検出をスキップし、リクエストを変更せずに転送すること。
 3. The Dynamic Model Routing Middleware shall エイリアス除去対象のユーザーメッセージ内容と `model` 以外のリクエストフィールドを変更しないこと。
-4. If 最新のユーザーメッセージが非テキストのみの場合, the Dynamic Model Routing Middleware shall エイリアス検出をスキップし、リクエストを変更せずに転送すること。
-5. The Dynamic Model Routing Middleware shall 画像、URL、バイナリなどの非テキスト内容を解析または変更しないこと。
+
+### Requirement 6: スコープ制限
+**目的:** システムアーキテクトとして、機能のスコープを明確にし、実装をシンプルに保ちたい。
+
+#### 受入基準
+1. The Dynamic Model Routing Middleware shall スキーマ検証後の文字列形式コンテンツのみを対象とすること。
+2. The Dynamic Model Routing Middleware shall 配列形式の生データ構造の保持をスコープ外とすること（既存スキーマにより文字列に変換済み）。
+3. The Dynamic Model Routing Middleware shall 非テキストパート（画像、音声等）の個別処理をスコープ外とすること。
+4. The Dynamic Model Routing Middleware shall 既存の `ChatCompletionRequestSchema` の変換ロジックを変更しないこと。
