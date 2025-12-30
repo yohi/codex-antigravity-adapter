@@ -420,12 +420,12 @@ const result = normalizeTransformResult(
 
 ### Logical Data Model
 
-**Structure Definition**:
+#### Structure Definition
 - `model-aliases.json` はキーがエイリアスタグ、値がターゲットモデルIDのフラットなJSONオブジェクト
 - エイリアス形式: `@[a-zA-Z][a-zA-Z0-9_-]*`
 - モデルID形式: 空でない文字列
 
-**Sample Configuration**:
+#### Sample Configuration
 ```json
 {
   "@fast": "gemini-3-flash",
@@ -434,7 +434,7 @@ const result = normalizeTransformResult(
 }
 ```
 
-**Consistency & Integrity**:
+#### Consistency & Integrity
 - 読み込み時に無効なエントリは除外し、残りを保持する
 - 重複キーは JSON パーサーの標準動作（後勝ち）に従う
 
