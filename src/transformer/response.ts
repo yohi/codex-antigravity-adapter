@@ -20,10 +20,10 @@ export type TransformResult<T> =
 export type AntigravityContentPart =
   | SignatureBlock
   | {
-      text?: string;
-      functionCall?: AntigravityFunctionCall;
-      functionResponse?: Record<string, unknown>;
-    };
+    text?: string;
+    functionCall?: AntigravityFunctionCall;
+    functionResponse?: Record<string, unknown>;
+  };
 
 export type AntigravityFunctionCall = {
   id?: unknown;
@@ -292,7 +292,16 @@ export function transformStream(
       return;
     }
 
-    enqueueData(JSON.stringify(chunkResult.value));
+    // Thinkingブロックのみを含むチャンクなど、deltaが空でfinish_reasonもない場合は送信をスキップする
+    // クライアントによっては空のdeltaが大量に来ると挙動がおかしくなる可能性があるため
+    const shouldSkip = chunkResult.value.choices.every(
+      (choice) =>
+        Object.keys(choice.delta).length === 0 && choice.finish_reason === null
+    );
+
+    if (!shouldSkip) {
+      enqueueData(JSON.stringify(chunkResult.value));
+    }
   };
 
   let controller: ReadableStreamDefaultController<Uint8Array>;
