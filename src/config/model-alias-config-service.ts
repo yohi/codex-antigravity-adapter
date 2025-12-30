@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 import type { Logger } from "../logging";
 import { NOOP_LOGGER } from "../logging";
 
@@ -20,6 +22,11 @@ export type LoadAliasesOptions = {
 export type ModelAliasConfigServiceFactory = {
   loadAliases: (options?: LoadAliasesOptions) => Promise<ModelAliasConfigService>;
 };
+
+const AliasTagSchema = z
+  .string()
+  .regex(/^@[a-zA-Z][a-zA-Z0-9_-]*$/, "Invalid alias tag format");
+const TargetModelSchema = z.string().min(1, "Model ID must not be empty");
 
 export function createModelAliasConfigService(): ModelAliasConfigServiceFactory {
   return {
@@ -78,7 +85,7 @@ async function loadAliases(
     for (const [alias, target] of Object.entries(
       parsed as Record<string, unknown>
     )) {
-      if (typeof target === "string") {
+      if (isValidAliasEntry(alias, target, logger, filePath)) {
         aliasMap.set(alias, target);
       }
     }
@@ -96,4 +103,33 @@ function createAliasService(
     listAliases: () => Array.from(readonlyMap.keys()),
     getAll: () => readonlyMap,
   };
+}
+
+function isValidAliasEntry(
+  alias: string,
+  target: unknown,
+  logger: Logger,
+  filePath: string
+): target is string {
+  const aliasResult = AliasTagSchema.safeParse(alias);
+  if (!aliasResult.success) {
+    logger.warn("Invalid model alias entry, skipping", {
+      filePath,
+      alias,
+      reason: "invalid alias tag format",
+    });
+    return false;
+  }
+
+  const targetResult = TargetModelSchema.safeParse(target);
+  if (!targetResult.success) {
+    logger.warn("Invalid model alias entry, skipping", {
+      filePath,
+      alias,
+      reason: "invalid target model id",
+    });
+    return false;
+  }
+
+  return true;
 }
