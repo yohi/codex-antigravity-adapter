@@ -110,4 +110,45 @@ describe("ModelAliasConfigService", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("skips invalid alias entries and logs warnings", async () => {
+    const { entries, logger } = createTestLogger();
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "antigravity-aliases-"));
+    const filePath = path.join(tempDir, "model-aliases.json");
+
+    try {
+      await writeFile(
+        filePath,
+        JSON.stringify({
+          "@fast": "gemini-3-flash",
+          fast: "gemini-3-flash",
+          "@empty": "",
+          "@bad space": "gemini-3-flash",
+          "@badtarget": 42,
+        }),
+        "utf8"
+      );
+
+      const service = await createModelAliasConfigService().loadAliases({
+        filePath,
+        logger,
+      });
+
+      expect(service.getAll().size).toBe(1);
+      expect(service.getTargetModel("@fast")).toBe("gemini-3-flash");
+      expect(service.hasAlias("fast")).toBe(false);
+      expect(service.hasAlias("@empty")).toBe(false);
+      expect(service.hasAlias("@bad space")).toBe(false);
+      expect(service.hasAlias("@badtarget")).toBe(false);
+
+      const invalidWarnings = entries.filter(
+        (entry) =>
+          entry.level === "warn" &&
+          entry.message.includes("Invalid model alias entry")
+      );
+      expect(invalidWarnings.length).toBe(4);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
