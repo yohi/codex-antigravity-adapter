@@ -131,6 +131,36 @@ describe("ModelRoutingService", () => {
     expect(result.request.messages[2].content).toBe("hello world");
   });
 
+  it("keeps non-target messages unchanged when routing is applied", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const firstUser: ChatCompletionRequest["messages"][number] = {
+      role: "user",
+      content: "first",
+    };
+    const assistant: ChatCompletionRequest["messages"][number] = {
+      role: "assistant",
+      content: "ack",
+    };
+    const lastUser: ChatCompletionRequest["messages"][number] = {
+      role: "user",
+      content: "@fast hello",
+    };
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [firstUser, assistant, lastUser],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request.messages[0]).toBe(firstUser);
+    expect(result.request.messages[1]).toBe(assistant);
+    expect(result.request.messages[2]).not.toBe(lastUser);
+  });
+
   it("keeps an empty string when the alias consumes the full content", () => {
     const service = createModelRoutingService({
       aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
@@ -145,6 +175,43 @@ describe("ModelRoutingService", () => {
 
     expect(result.request.model).toBe("gemini-3-flash");
     expect(result.request.messages[0].content).toBe("");
+  });
+
+  it("keeps non-model request fields unchanged when routing is applied", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const tools: NonNullable<ChatCompletionRequest["tools"]> = [
+      {
+        type: "function",
+        function: { name: "doWork" },
+      },
+    ];
+    const toolChoice: NonNullable<ChatCompletionRequest["tool_choice"]> = {
+      type: "function",
+      function: { name: "doWork" },
+    };
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@fast hello" }],
+      tools,
+      tool_choice: toolChoice,
+      stream: true,
+      temperature: 0.2,
+      max_tokens: 128,
+      n: 1,
+    };
+
+    const result = service.route(request);
+
+    expect(result.request.model).toBe("gemini-3-flash");
+    expect(result.request.stream).toBe(request.stream);
+    expect(result.request.temperature).toBe(request.temperature);
+    expect(result.request.max_tokens).toBe(request.max_tokens);
+    expect(result.request.n).toBe(request.n);
+    expect(result.request.tools).toBe(tools);
+    expect(result.request.tool_choice).toBe(toolChoice);
   });
 
   it("logs routing details when an alias is applied", () => {
