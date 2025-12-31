@@ -57,14 +57,17 @@ export function createModelRoutingService(
   return {
     route: (request) => {
       void logger;
-      const latestUserMessageContent = getLatestUserMessageContent(
-        request.messages
-      );
-      if (latestUserMessageContent === null) {
+      const lastUserMessageIndex = findLastUserMessageIndex(request.messages);
+      if (lastUserMessageIndex === -1) {
         return { request, routed: false };
       }
 
-      const detection = detectAlias(latestUserMessageContent, knownAliases);
+      const lastUserMessage = request.messages[lastUserMessageIndex];
+      if (lastUserMessage.role !== "user") {
+        return { request, routed: false };
+      }
+
+      const detection = detectAlias(lastUserMessage.content, knownAliases);
       if (!detection.alias) {
         return { request, routed: false };
       }
@@ -74,8 +77,14 @@ export function createModelRoutingService(
         return { request, routed: false };
       }
 
+      const updatedMessages = request.messages.slice();
+      updatedMessages[lastUserMessageIndex] = {
+        ...lastUserMessage,
+        content: detection.remainingContent,
+      };
+
       return {
-        request: { ...request, model: targetModel },
+        request: { ...request, model: targetModel, messages: updatedMessages },
         routed: true,
         detectedAlias: detection.alias,
         originalModel: request.model,
