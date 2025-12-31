@@ -45,4 +45,32 @@ describe("detectAlias", () => {
     expect(result.alias).toBe("@fast");
     expect(result.remainingContent).toBe("hello world");
   });
+
+  it("keeps remainingContent equal to content when alias is not detected", () => {
+    const cases = [
+      { content: "hello", aliases: new Set(["@fast"]) },
+      { content: "hello @fast", aliases: new Set(["@fast"]) },
+      { content: "@slow hello", aliases: new Set(["@fast"]) },
+      { content: "@fastest hi", aliases: new Set(["@fast"]) },
+    ];
+
+    for (const { content, aliases } of cases) {
+      const result = detectAlias(content, aliases);
+
+      expect(result.alias).toBeNull();
+      expect(result.remainingContent).toBe(content);
+    }
+  });
+
+  it("ensures detected aliases are a prefix of the content", () => {
+    const aliases = new Set(["@fast", "@pro"]);
+    const cases = ["@fast hello", "@fast", "@pro test", "@pro"];
+
+    for (const content of cases) {
+      const result = detectAlias(content, aliases);
+
+      expect(result.alias).not.toBeNull();
+      expect(content.startsWith(result.alias ?? "")).toBe(true);
+    }
+  });
 });
