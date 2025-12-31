@@ -1,10 +1,23 @@
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 
+import type {
+  LoadAliasesOptions,
+  ModelAliasConfigService,
+  ModelAliasConfigServiceFactory,
+} from "../src/config/model-alias-config-service";
 import type { Logger } from "../src/logging";
 import { NOOP_LOGGER } from "../src/logging";
 import type { ModelSettingsService } from "../src/config/model-settings-service";
+import type { AppContext, CreateAppContextOptions } from "../src/main";
 import { STARTUP_BANNER, startApplication, startServers } from "../src/main";
+
+const mockModelSettingsService: ModelSettingsService = {
+  load: async () => ({
+    models: [{ id: "test-model", object: "model", created: 1234567890, owned_by: "test" }],
+    sources: { fixed: 1, file: 0, env: 0 },
+  }),
+};
 
 function createLogCollector() {
   const entries: Array<{
@@ -82,16 +95,79 @@ describe("main", () => {
   });
 });
 
-describe("startApplication PORT parsing", () => {
-  const mockModelSettingsService: ModelSettingsService = {
-    load: async () => ({
-      models: [
-        { id: "test-model", object: "model", created: 1234567890, owned_by: "test" }
-      ],
-      sources: { fixed: 1, file: 0, env: 0 }
-    })
-  };
+describe("startApplication model aliases", () => {
+  it("loads model aliases and injects the config service into createAppContext", async () => {
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => ["@fast"],
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedLoadOptions: LoadAliasesOptions | undefined;
+    let capturedOptions: CreateAppContextOptions | undefined;
 
+    const modelAliasConfigServiceFactory: ModelAliasConfigServiceFactory = {
+      loadAliases: async (options) => {
+        capturedLoadOptions = options;
+        return aliasConfigService;
+      },
+    };
+
+    await startApplication({
+      logger: NOOP_LOGGER,
+      modelSettingsService: mockModelSettingsService,
+      modelAliasConfigServiceFactory,
+      createAppContext: (options) => {
+        capturedOptions = options;
+        return {
+          authApp: new Hono(),
+          proxyApp: new Hono(),
+        } as AppContext;
+      },
+      startAuthServer: () => ({ stop: () => {} }),
+      startProxyServer: () => ({ stop: () => {} }),
+    });
+
+    expect(capturedLoadOptions?.logger).toBe(NOOP_LOGGER);
+    expect(capturedOptions?.modelAliasConfigService).toBe(aliasConfigService);
+  });
+
+  it("logs errors when model alias loading fails and continues with an empty config", async () => {
+    const { entries, logger } = createLogCollector();
+    let capturedOptions: CreateAppContextOptions | undefined;
+
+    const modelAliasConfigServiceFactory: ModelAliasConfigServiceFactory = {
+      loadAliases: async () => {
+        throw new Error("alias load failed");
+      },
+    };
+
+    await startApplication({
+      logger,
+      modelSettingsService: mockModelSettingsService,
+      modelAliasConfigServiceFactory,
+      createAppContext: (options) => {
+        capturedOptions = options;
+        return {
+          authApp: new Hono(),
+          proxyApp: new Hono(),
+        } as AppContext;
+      },
+      startAuthServer: () => ({ stop: () => {} }),
+      startProxyServer: () => ({ stop: () => {} }),
+    });
+
+    const errorEntry = entries.find(
+      (entry) =>
+        entry.level === "error" && entry.message === "Failed to load model aliases"
+    );
+    expect(errorEntry).toBeTruthy();
+    expect(errorEntry?.context).toMatchObject({ error: "alias load failed" });
+    expect(capturedOptions?.modelAliasConfigService?.listAliases()).toEqual([]);
+  });
+});
+
+describe("startApplication PORT parsing", () => {
   /**
    * Helper to test PORT parsing with automatic environment cleanup
    */
