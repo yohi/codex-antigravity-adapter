@@ -57,6 +57,25 @@ describe("ModelRoutingService", () => {
     expect(result.originalModel).toBeUndefined();
   });
 
+  it("passes through when there is no user message", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [
+        { role: "system", content: "system" },
+        { role: "assistant", content: "ack" },
+      ],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request).toBe(request);
+    expect(result.routed).toBe(false);
+  });
+
   it("replaces the model when a configured alias is detected", () => {
     const service = createModelRoutingService({
       aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
