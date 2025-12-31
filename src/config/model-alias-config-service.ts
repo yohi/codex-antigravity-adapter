@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Logger } from "../logging";
 import { isUnsafePath } from "../utils/path-safety";
-import { dirname, resolve } from "path";
+import { resolve, relative, isAbsolute } from "path";
 
 export type AliasMap = ReadonlyMap<string, string>;
 
@@ -54,32 +54,18 @@ export function createModelAliasConfigService(): ModelAliasConfigServiceFactory 
 
       // Path safety check
       if (!skipPathSafetyCheck) {
-        // We need to check if isUnsafePath is available. 
-        // Assuming implementation similar to model-settings-service.ts
-        // For now, let's just use the imported isUnsafePath if it exists or implement a basic check.
-        // The design says "Use isUnsafePath from utils/path-safety.ts".
-        // I will need to verify if src/utils/path-safety.ts exists. 
-        // If not, I should implement it or check model-settings-service.ts.
-        
-        // Wait, I saw src/utils/path-safety.ts in the file list!
-        // So I can use it.
-        
-        // Since isUnsafePath might be async or check realpath, let's assume it checks for ".."
-        // The design says: "isUnsafePath により .. を含むパス、絶対パスを拒否"
-        // "realpath によりシンボリックリンクを解決"
-        
+        // Reject unsafe paths (e.g. containing "..")
         if (isUnsafePath(filePath)) {
              logger?.warn(`Invalid configuration path detected: ${filePath}`);
              return new ModelAliasConfigServiceImpl(new Map());
         }
 
-        // Realpath check (simple version for now, maybe move to path-safety later or use here)
-        // design says: "realpath でシンボリックリンクを解決し、プロジェクトルート内に収まることを検証"
-        // I'll implement a basic check here if path-safety doesn't cover it all.
+        // Ensure path resolves within project root
         try {
            const real = await Bun.realpath(filePath);
            const projectRoot = process.cwd();
-           if (!real.startsWith(projectRoot)) {
+           const rel = relative(projectRoot, real);
+           if (rel.startsWith('..') || isAbsolute(rel)) {
                logger?.warn(`Configuration path traverses outside project root: ${filePath}`);
                return new ModelAliasConfigServiceImpl(new Map());
            }

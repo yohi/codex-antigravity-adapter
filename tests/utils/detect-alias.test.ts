@@ -13,21 +13,9 @@ describe("detectAlias", () => {
 
   it("should detect alias with newline after", () => {
     const content = "@think\nAnalysis started";
-    // Usually we might expect space, but definition says "whitespace". 
-    // Requirement 2.3 says "直後が空白または内容終端".
-    // Let's assume space or newline is whitespace. 
-    // However, the implementation detail in design says "detectAlias (Pure Function)... 直後が空白(1文字)を除去".
-    // If it's a newline, is it removed? 
-    // Requirement 4.1: "エイリアスタグと直後の空白を除去すること"
-    // Usually "whitespace" implies space, tab, newline.
-    // Let's stick to space first as primary use case, but check implementation logic later.
-    // For now, let's test space.
-    
-    // If input is "@fast\n", and we treat \n as whitespace to separate, 
-    // we should probably remove it? Or just the tag?
-    // "remove alias tag and immediate following whitespace"
-    
-    // Let's create a test for space first.
+    const result = detectAlias(content, aliases);
+    expect(result.alias).toBe("@think");
+    expect(result.remainingContent).toBe("Analysis started");
   });
 
   it("should detect alias exactly matching content", () => {
