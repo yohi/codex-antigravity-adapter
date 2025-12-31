@@ -7,12 +7,15 @@ import {
   getLatestUserMessageContent,
 } from "../src/proxy/model-routing-service";
 
-function createAliasConfigStub(): ModelAliasConfigService {
+function createAliasConfigStub(
+  aliases: Record<string, string> = {}
+): ModelAliasConfigService {
+  const aliasMap = new Map(Object.entries(aliases));
   return {
-    getTargetModel: () => undefined,
-    hasAlias: () => false,
-    listAliases: () => [],
-    getAll: () => new Map(),
+    getTargetModel: (alias) => aliasMap.get(alias),
+    hasAlias: (alias) => aliasMap.has(alias),
+    listAliases: () => Array.from(aliasMap.keys()),
+    getAll: () => aliasMap,
   };
 }
 
@@ -33,6 +36,39 @@ describe("ModelRoutingService", () => {
     expect(result.routed).toBe(false);
     expect(result.detectedAlias).toBeUndefined();
     expect(result.originalModel).toBeUndefined();
+  });
+
+  it("replaces the model when a configured alias is detected", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@fast hello" }],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request.model).toBe("gemini-3-flash");
+    expect(result.routed).toBe(true);
+  });
+
+  it("keeps the original model when the alias is unknown", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@slow hello" }],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request).toBe(request);
+    expect(result.request.model).toBe("gemini-3-pro");
+    expect(result.routed).toBe(false);
   });
 });
 

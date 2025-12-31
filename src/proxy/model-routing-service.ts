@@ -2,6 +2,7 @@ import type { ModelAliasConfigService } from "../config/model-alias-config-servi
 import type { Logger } from "../logging";
 import { NOOP_LOGGER } from "../logging";
 import type { ChatCompletionRequest } from "../transformer/schema";
+import { detectAlias } from "../utils/detect-alias";
 
 export type RoutingResult = {
   request: ChatCompletionRequest;
@@ -51,18 +52,34 @@ export function createModelRoutingService(
 ): ModelRoutingService {
   const logger = options.logger ?? NOOP_LOGGER;
   const aliasConfig = options.aliasConfig;
+  const knownAliases = new Set(aliasConfig.listAliases());
 
   return {
     route: (request) => {
       void logger;
-      void aliasConfig;
       const latestUserMessageContent = getLatestUserMessageContent(
         request.messages
       );
       if (latestUserMessageContent === null) {
         return { request, routed: false };
       }
-      return { request, routed: false };
+
+      const detection = detectAlias(latestUserMessageContent, knownAliases);
+      if (!detection.alias) {
+        return { request, routed: false };
+      }
+
+      const targetModel = aliasConfig.getTargetModel(detection.alias);
+      if (!targetModel) {
+        return { request, routed: false };
+      }
+
+      return {
+        request: { ...request, model: targetModel },
+        routed: true,
+        detectedAlias: detection.alias,
+        originalModel: request.model,
+      };
     },
   };
 }
