@@ -9,6 +9,7 @@
 │   ├── config/         # Configuration & Constants (Model Catalog)
 │   ├── proxy/          # Proxy server & Client logic
 │   ├── transformer/    # Request/Response translation (OpenAI <-> Antigravity)
+│   ├── utils/          # Shared utilities (Alias detection, Path safety)
 │   ├── logging.ts      # Shared logging utilities
 │   └── main.ts         # Entry point & Composition root
 ├── tests/              # Test files (mirroring src/)
