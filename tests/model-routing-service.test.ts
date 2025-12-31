@@ -70,6 +70,44 @@ describe("ModelRoutingService", () => {
     expect(result.request.model).toBe("gemini-3-pro");
     expect(result.routed).toBe(false);
   });
+
+  it("sanitizes only the latest user message when routing is applied", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [
+        { role: "user", content: "first" },
+        { role: "assistant", content: "ack" },
+        { role: "user", content: "@fast hello world" },
+      ],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request.model).toBe("gemini-3-flash");
+    expect(result.request.messages[0].content).toBe("first");
+    expect(result.request.messages[1].content).toBe("ack");
+    expect(result.request.messages[2].content).toBe("hello world");
+  });
+
+  it("keeps an empty string when the alias consumes the full content", () => {
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@fast" }],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request.model).toBe("gemini-3-flash");
+    expect(result.request.messages[0].content).toBe("");
+  });
 });
 
 describe("getLatestUserMessageContent", () => {
