@@ -56,7 +56,7 @@
   - _Requirements: 2.3, 4.1, 4.2, 5.2_
 
 - [ ] 3. ModelRoutingService の実装
-- [ ] 3.1 ModelRoutingService の基本構造を実装する
+- [x] 3.1 ModelRoutingService の基本構造を実装する
   - route メソッドのインターフェースを実装する
   - RoutingResult 型を定義し、返却する
   - ファクトリ関数 createModelRoutingService の骨格を作成する
