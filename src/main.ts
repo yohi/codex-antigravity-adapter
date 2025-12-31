@@ -273,7 +273,7 @@ function createEmptyAliasConfigService(): ModelAliasConfigService {
     getTargetModel: (alias) => aliasMap.get(alias),
     hasAlias: (alias) => aliasMap.has(alias),
     listAliases: () => [],
-    getAll: () => aliasMap,
+    getAll: () => aliasMap as ReadonlyMap<string, string>,
   };
 }
 

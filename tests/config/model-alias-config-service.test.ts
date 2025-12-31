@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createModelAliasConfigService, type ModelAliasConfigService } from "../../src/config/model-alias-config-service";
-import { createLogger } from "../../src/logging";
+
 
 // Mock logger
 const mockLogger = {

@@ -17,7 +17,11 @@ export function detectAlias(
     return { alias: null, remainingContent: content };
   }
 
-  for (const alias of knownAliases) {
+  // Sort aliases by length descending to ensure we match the longest possible alias
+  // (e.g. match "@foo bar" before "@foo")
+  const sortedAliases = Array.from(knownAliases).sort((a, b) => b.length - a.length);
+
+  for (const alias of sortedAliases) {
     if (content.startsWith(alias)) {
       const rest = content.slice(alias.length);
       
