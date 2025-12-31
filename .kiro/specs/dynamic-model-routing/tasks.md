@@ -115,7 +115,7 @@
   - _Requirements: 2.4, 6.1, 6.4_
 
 - [ ] 5. アプリケーション起動時の統合
-- [ ] 5.1 main.ts でエイリアス設定を読み込む
+- [x] 5.1 main.ts でエイリアス設定を読み込む
   - startApplication 関数で ModelAliasConfigService をロードする
   - ロードした設定サービスを createAppContext に注入する
   - エイリアス設定のロードエラーをログに記録する
