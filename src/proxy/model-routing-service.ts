@@ -19,6 +19,33 @@ export type CreateModelRoutingServiceOptions = {
   logger?: Logger;
 };
 
+function findLastUserMessageIndex(
+  messages: ChatCompletionRequest["messages"]
+): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index].role === "user") {
+      return index;
+    }
+  }
+  return -1;
+}
+
+export function getLatestUserMessageContent(
+  messages: ChatCompletionRequest["messages"]
+): string | null {
+  const lastUserMessageIndex = findLastUserMessageIndex(messages);
+  if (lastUserMessageIndex === -1) {
+    return null;
+  }
+
+  const lastUserMessage = messages[lastUserMessageIndex];
+  if (lastUserMessage.role !== "user") {
+    return null;
+  }
+
+  return lastUserMessage.content;
+}
+
 export function createModelRoutingService(
   options: CreateModelRoutingServiceOptions
 ): ModelRoutingService {
@@ -29,6 +56,12 @@ export function createModelRoutingService(
     route: (request) => {
       void logger;
       void aliasConfig;
+      const latestUserMessageContent = getLatestUserMessageContent(
+        request.messages
+      );
+      if (latestUserMessageContent === null) {
+        return { request, routed: false };
+      }
       return { request, routed: false };
     },
   };
