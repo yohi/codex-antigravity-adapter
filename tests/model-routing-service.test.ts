@@ -1,11 +1,30 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ModelAliasConfigService } from "../src/config/model-alias-config-service";
+import type { Logger } from "../src/logging";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 import {
   createModelRoutingService,
   getLatestUserMessageContent,
 } from "../src/proxy/model-routing-service";
+
+type LogEntry = {
+  level: "debug" | "info" | "warn" | "error";
+  message: string;
+  context?: Record<string, unknown>;
+};
+
+function createTestLogger() {
+  const entries: LogEntry[] = [];
+  const logger: Logger = {
+    debug: (message, context) => entries.push({ level: "debug", message, context }),
+    info: (message, context) => entries.push({ level: "info", message, context }),
+    warn: (message, context) => entries.push({ level: "warn", message, context }),
+    error: (message, context) => entries.push({ level: "error", message, context }),
+  };
+
+  return { entries, logger };
+}
 
 function createAliasConfigStub(
   aliases: Record<string, string> = {}
@@ -107,6 +126,57 @@ describe("ModelRoutingService", () => {
 
     expect(result.request.model).toBe("gemini-3-flash");
     expect(result.request.messages[0].content).toBe("");
+  });
+
+  it("logs routing details when an alias is applied", () => {
+    const { entries, logger } = createTestLogger();
+    const service = createModelRoutingService({
+      aliasConfig: createAliasConfigStub({ "@fast": "gemini-3-flash" }),
+      logger,
+    });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@fast hello" }],
+    };
+
+    service.route(request);
+
+    const debugEntry = entries.find((entry) => entry.level === "debug");
+    expect(debugEntry?.context).toEqual(
+      expect.objectContaining({
+        originalModel: "gemini-3-pro",
+        alias: "@fast",
+        targetModel: "gemini-3-flash",
+      })
+    );
+  });
+
+  it("logs errors and returns the original request when routing throws", () => {
+    const { entries, logger } = createTestLogger();
+    const aliasConfig: ModelAliasConfigService = {
+      getTargetModel: () => {
+        throw new Error("boom");
+      },
+      hasAlias: () => true,
+      listAliases: () => ["@fast"],
+      getAll: () => new Map([["@fast", "gemini-3-flash"]]),
+    };
+    const service = createModelRoutingService({ aliasConfig, logger });
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro",
+      messages: [{ role: "user", content: "@fast hello" }],
+    };
+
+    const result = service.route(request);
+
+    expect(result.request).toBe(request);
+    expect(result.routed).toBe(false);
+    const errorEntry = entries.find((entry) => entry.level === "error");
+    expect(errorEntry?.context).toEqual(
+      expect.objectContaining({ error: "boom" })
+    );
   });
 });
 
