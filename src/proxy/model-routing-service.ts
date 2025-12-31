@@ -56,39 +56,51 @@ export function createModelRoutingService(
 
   return {
     route: (request) => {
-      void logger;
-      const lastUserMessageIndex = findLastUserMessageIndex(request.messages);
-      if (lastUserMessageIndex === -1) {
+      try {
+        const lastUserMessageIndex = findLastUserMessageIndex(request.messages);
+        if (lastUserMessageIndex === -1) {
+          return { request, routed: false };
+        }
+
+        const lastUserMessage = request.messages[lastUserMessageIndex];
+        if (lastUserMessage.role !== "user") {
+          return { request, routed: false };
+        }
+
+        const detection = detectAlias(lastUserMessage.content, knownAliases);
+        if (!detection.alias) {
+          return { request, routed: false };
+        }
+
+        const targetModel = aliasConfig.getTargetModel(detection.alias);
+        if (!targetModel) {
+          return { request, routed: false };
+        }
+
+        logger.debug("Model routing applied", {
+          originalModel: request.model,
+          alias: detection.alias,
+          targetModel,
+        });
+
+        const updatedMessages = request.messages.slice();
+        updatedMessages[lastUserMessageIndex] = {
+          ...lastUserMessage,
+          content: detection.remainingContent,
+        };
+
+        return {
+          request: { ...request, model: targetModel, messages: updatedMessages },
+          routed: true,
+          detectedAlias: detection.alias,
+          originalModel: request.model,
+        };
+      } catch (error) {
+        logger.error("Model routing failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
         return { request, routed: false };
       }
-
-      const lastUserMessage = request.messages[lastUserMessageIndex];
-      if (lastUserMessage.role !== "user") {
-        return { request, routed: false };
-      }
-
-      const detection = detectAlias(lastUserMessage.content, knownAliases);
-      if (!detection.alias) {
-        return { request, routed: false };
-      }
-
-      const targetModel = aliasConfig.getTargetModel(detection.alias);
-      if (!targetModel) {
-        return { request, routed: false };
-      }
-
-      const updatedMessages = request.messages.slice();
-      updatedMessages[lastUserMessageIndex] = {
-        ...lastUserMessage,
-        content: detection.remainingContent,
-      };
-
-      return {
-        request: { ...request, model: targetModel, messages: updatedMessages },
-        routed: true,
-        detectedAlias: detection.alias,
-        originalModel: request.model,
-      };
     },
   };
 }
