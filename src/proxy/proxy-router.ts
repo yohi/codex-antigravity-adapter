@@ -4,6 +4,7 @@ import {
   DEFAULT_FIXED_MODEL_IDS,
   type ModelCatalog,
 } from "../config/model-settings-service";
+import type { ModelRoutingService } from "./model-routing-service";
 import { ChatCompletionRequestSchema } from "../transformer/schema";
 import type { ProxyError, TransformService } from "./transform-service";
 
@@ -22,6 +23,7 @@ export type ProxyServerOptions = {
 export type CreateProxyAppOptions = {
   transformService: TransformService;
   modelCatalog?: ModelCatalog;
+  modelRoutingService?: ModelRoutingService;
 };
 
 const DEFAULT_PROXY_PORT = 3000;
@@ -63,8 +65,10 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
       );
     }
 
+    const routingResult = options.modelRoutingService?.route(parsed.data);
+    const routedRequest = routingResult?.request ?? parsed.data;
     const result = normalizeTransformResult(
-      await options.transformService.handleCompletion(parsed.data)
+      await options.transformService.handleCompletion(routedRequest)
     );
     if (!result.ok) {
       const status = result.error.statusCode || 500;

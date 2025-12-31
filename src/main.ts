@@ -4,6 +4,11 @@ import { createAuthApp, startAuthServer, type AuthServerOptions } from "./auth/a
 import { OAuthAuthService } from "./auth/auth-service";
 import { FileTokenStore } from "./auth/token-store";
 import {
+  createModelAliasConfigService,
+  type ModelAliasConfigService,
+  type ModelAliasConfigServiceFactory,
+} from "./config/model-alias-config-service";
+import {
   createModelSettingsService,
   DEFAULT_FIXED_MODEL_IDS,
   type ModelCatalog,
@@ -11,8 +16,12 @@ import {
 } from "./config/model-settings-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
+import {
+  createModelRoutingService,
+  type ModelRoutingService,
+} from "./proxy/model-routing-service";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
-import { createTransformService } from "./proxy/transform-service";
+import { createTransformService, type TransformService } from "./proxy/transform-service";
 import { DEFAULT_SIGNATURE_CACHE, SESSION_ID } from "./transformer/helpers";
 
 export const STARTUP_BANNER = "codex-antigravity-adapter";
@@ -31,14 +40,33 @@ export type StartServersOptions = {
   onSignal?: (signal: "SIGINT" | "SIGTERM", handler: () => void) => void;
 };
 
+export type CreateAppContextOptions = {
+  logger?: Logger;
+  modelCatalog?: ModelCatalog;
+  modelAliasConfigService?: ModelAliasConfigService;
+  createProxyApp?: typeof createProxyApp;
+};
+
+export type AppContext = {
+  authApp: Hono;
+  proxyApp: Hono;
+  tokenStore: FileTokenStore;
+  authService: OAuthAuthService;
+  transformService: TransformService;
+  modelAliasConfigService?: ModelAliasConfigService;
+  modelRoutingService?: ModelRoutingService;
+};
+
 export function initializeRuntime(): { sessionId: string } {
   DEFAULT_SIGNATURE_CACHE.pruneExpired();
   return { sessionId: SESSION_ID };
 }
 
-export function createAppContext(options: { logger?: Logger; modelCatalog?: ModelCatalog } = {}) {
+export function createAppContext(options: CreateAppContextOptions = {}): AppContext {
   const logger = options.logger ?? NOOP_LOGGER;
   const modelCatalog = options.modelCatalog;
+  const modelAliasConfigService = options.modelAliasConfigService;
+  const buildProxyApp = options.createProxyApp ?? createProxyApp;
   initializeRuntime();
 
   const tokenStore = new FileTokenStore({ logger });
@@ -46,7 +74,14 @@ export function createAppContext(options: { logger?: Logger; modelCatalog?: Mode
   const requester = createAntigravityRequester({ logger });
   const transformService = createTransformService({ tokenStore, requester });
   const authApp = createAuthApp(authService);
-  const proxyApp = createProxyApp({ transformService, modelCatalog });
+  const modelRoutingService = modelAliasConfigService
+    ? createModelRoutingService({ aliasConfig: modelAliasConfigService, logger })
+    : undefined;
+  const proxyApp = buildProxyApp({
+    transformService,
+    modelCatalog,
+    modelRoutingService,
+  });
 
   return {
     authApp,
@@ -54,6 +89,8 @@ export function createAppContext(options: { logger?: Logger; modelCatalog?: Mode
     tokenStore,
     authService,
     transformService,
+    modelAliasConfigService,
+    modelRoutingService,
   };
 }
 
@@ -230,12 +267,24 @@ function parsePort(value: string | undefined): number | undefined {
   return parsed;
 }
 
+function createEmptyAliasConfigService(): ModelAliasConfigService {
+  const aliasMap = new Map<string, string>();
+  return {
+    getTargetModel: (alias) => aliasMap.get(alias),
+    hasAlias: (alias) => aliasMap.has(alias),
+    listAliases: () => [],
+    getAll: () => aliasMap as ReadonlyMap<string, string>,
+  };
+}
+
 export type StartApplicationOptions = {
   debug?: boolean;
   logger?: Logger;
   modelSettingsService?: ModelSettingsService;
+  modelAliasConfigServiceFactory?: ModelAliasConfigServiceFactory;
   fixedModelIds?: readonly string[];
   now?: () => number;
+  createAppContext?: (options: CreateAppContextOptions) => AppContext;
   startAuthServer?: typeof startAuthServer;
   startProxyServer?: typeof startProxyServer;
 };
@@ -250,7 +299,23 @@ export async function startApplication(options: StartApplicationOptions = {}) {
     fixedModelIds: options.fixedModelIds,
     now: options.now,
   });
-  const { authApp, proxyApp } = createAppContext({ logger, modelCatalog });
+  const aliasFactory =
+    options.modelAliasConfigServiceFactory ?? createModelAliasConfigService();
+  let modelAliasConfigService: ModelAliasConfigService;
+  try {
+    modelAliasConfigService = await aliasFactory.loadAliases({ logger });
+  } catch (error) {
+    logger.error("Failed to load model aliases", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    modelAliasConfigService = createEmptyAliasConfigService();
+  }
+  const buildAppContext = options.createAppContext ?? createAppContext;
+  const { authApp, proxyApp } = buildAppContext({
+    logger,
+    modelCatalog,
+    modelAliasConfigService,
+  });
   const proxyPort = parsePort(process.env.PORT);
   return startServers({
     authApp,

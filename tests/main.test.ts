@@ -1,10 +1,26 @@
 import { describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 
+import type {
+  LoadAliasesOptions,
+  ModelAliasConfigService,
+  ModelAliasConfigServiceFactory,
+} from "../src/config/model-alias-config-service";
 import type { Logger } from "../src/logging";
 import { NOOP_LOGGER } from "../src/logging";
 import type { ModelSettingsService } from "../src/config/model-settings-service";
-import { STARTUP_BANNER, startApplication, startServers } from "../src/main";
+import type { AppContext, CreateAppContextOptions } from "../src/main";
+import { STARTUP_BANNER, createAppContext, startApplication, startServers } from "../src/main";
+import { createProxyApp, type CreateProxyAppOptions } from "../src/proxy/proxy-router";
+import type { TransformService } from "../src/proxy/transform-service";
+import type { ChatCompletionRequest } from "../src/transformer/schema";
+
+const mockModelSettingsService: ModelSettingsService = {
+  load: async () => ({
+    models: [{ id: "test-model", object: "model", created: 1234567890, owned_by: "test" }],
+    sources: { fixed: 1, file: 0, env: 0 },
+  }),
+};
 
 function createLogCollector() {
   const entries: Array<{
@@ -19,6 +35,18 @@ function createLogCollector() {
     error: (message, context) => entries.push({ level: "error", message, context }),
   };
   return { entries, logger };
+}
+
+function createTransformServiceStub(
+  onRequest?: (request: ChatCompletionRequest) => void,
+  response: unknown = { id: "resp-1" }
+): TransformService {
+  return {
+    handleCompletion: async (request) => {
+      onRequest?.(request);
+      return { ok: true, value: response };
+    },
+  };
 }
 
 describe("main", () => {
@@ -82,16 +110,220 @@ describe("main", () => {
   });
 });
 
-describe("startApplication PORT parsing", () => {
-  const mockModelSettingsService: ModelSettingsService = {
-    load: async () => ({
-      models: [
-        { id: "test-model", object: "model", created: 1234567890, owned_by: "test" }
-      ],
-      sources: { fixed: 1, file: 0, env: 0 }
-    })
-  };
+describe("createAppContext model routing", () => {
+  it("creates a routing service and passes it to createProxyApp", () => {
+    let listAliasesCalls = 0;
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => {
+        listAliasesCalls += 1;
+        return ["@fast"];
+      },
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedProxyOptions: CreateProxyAppOptions | undefined;
 
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      modelAliasConfigService: aliasConfigService,
+      createProxyApp: (options) => {
+        capturedProxyOptions = options;
+        return new Hono();
+      },
+    });
+
+    expect(context.modelRoutingService).toBeDefined();
+    expect(capturedProxyOptions?.modelRoutingService).toBe(context.modelRoutingService);
+
+    const routingService = context.modelRoutingService;
+    if (!routingService) {
+      throw new Error("modelRoutingService is undefined");
+    }
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [{ role: "user", content: "@fast hello" }],
+    };
+
+    const result = routingService.route(request);
+    expect(listAliasesCalls).toBe(1); // Expect call during route
+    expect(result.routed).toBe(true);
+    expect(result.request.model).toBe("gemini-fast");
+    expect(result.request.messages[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+    });
+  });
+});
+
+describe("createAppContext proxy integration", () => {
+  it("returns responses with routing enabled", async () => {
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => ["@fast"],
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedRequest: ChatCompletionRequest | null = null;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      modelAliasConfigService: aliasConfigService,
+      createProxyApp: (options) =>
+        createProxyApp({
+          transformService: createTransformServiceStub(
+            (request) => {
+              capturedRequest = request;
+            },
+            { id: "resp-routing" }
+          ),
+          modelCatalog: options.modelCatalog,
+          modelRoutingService: options.modelRoutingService,
+        }),
+    });
+
+    expect(context.modelAliasConfigService).toBe(aliasConfigService);
+
+    const response = await context.proxyApp.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3-flash",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "@fast hello" }],
+            },
+          ],
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "resp-routing" });
+    expect(capturedRequest).toMatchObject({
+      model: "gemini-fast",
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("returns responses without routing configured", async () => {
+    let capturedRequest: ChatCompletionRequest | null = null;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      createProxyApp: (options) =>
+        createProxyApp({
+          transformService: createTransformServiceStub(
+            (request) => {
+              capturedRequest = request;
+            },
+            { id: "resp-pass" }
+          ),
+          modelCatalog: options.modelCatalog,
+          modelRoutingService: options.modelRoutingService,
+        }),
+    });
+
+    expect(context.modelRoutingService).toBeUndefined();
+
+    const response = await context.proxyApp.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3-flash",
+          messages: [{ role: "user", content: "Hello." }],
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "resp-pass" });
+    expect(capturedRequest).toMatchObject({
+      model: "gemini-3-flash",
+      messages: [{ role: "user", content: "Hello." }],
+    });
+  });
+});
+
+describe("startApplication model aliases", () => {
+  it("loads model aliases and injects the config service into createAppContext", async () => {
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => ["@fast"],
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedLoadOptions: LoadAliasesOptions | undefined;
+    let capturedOptions: CreateAppContextOptions | undefined;
+
+    const modelAliasConfigServiceFactory: ModelAliasConfigServiceFactory = {
+      loadAliases: async (options) => {
+        capturedLoadOptions = options;
+        return aliasConfigService;
+      },
+    };
+
+    await startApplication({
+      logger: NOOP_LOGGER,
+      modelSettingsService: mockModelSettingsService,
+      modelAliasConfigServiceFactory,
+      createAppContext: (options) => {
+        capturedOptions = options;
+        return {
+          authApp: new Hono(),
+          proxyApp: new Hono(),
+        } as AppContext;
+      },
+      startAuthServer: () => ({ stop: () => {} }),
+      startProxyServer: () => ({ stop: () => {} }),
+    });
+
+    expect(capturedLoadOptions?.logger).toBe(NOOP_LOGGER);
+    expect(capturedOptions?.modelAliasConfigService).toBe(aliasConfigService);
+  });
+
+  it("logs errors when model alias loading fails and continues with an empty config", async () => {
+    const { entries, logger } = createLogCollector();
+    let capturedOptions: CreateAppContextOptions | undefined;
+
+    const modelAliasConfigServiceFactory: ModelAliasConfigServiceFactory = {
+      loadAliases: async () => {
+        throw new Error("alias load failed");
+      },
+    };
+
+    await startApplication({
+      logger,
+      modelSettingsService: mockModelSettingsService,
+      modelAliasConfigServiceFactory,
+      createAppContext: (options) => {
+        capturedOptions = options;
+        return {
+          authApp: new Hono(),
+          proxyApp: new Hono(),
+        } as AppContext;
+      },
+      startAuthServer: () => ({ stop: () => {} }),
+      startProxyServer: () => ({ stop: () => {} }),
+    });
+
+    const errorEntry = entries.find(
+      (entry) =>
+        entry.level === "error" && entry.message === "Failed to load model aliases"
+    );
+    expect(errorEntry).toBeTruthy();
+    expect(errorEntry?.context).toMatchObject({ error: "alias load failed" });
+    expect(capturedOptions?.modelAliasConfigService?.listAliases()).toEqual([]);
+  });
+});
+
+describe("startApplication PORT parsing", () => {
   /**
    * Helper to test PORT parsing with automatic environment cleanup
    */

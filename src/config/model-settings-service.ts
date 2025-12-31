@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { Logger } from "../logging";
 import { NOOP_LOGGER } from "../logging";
+import { isUnsafePath } from "../utils/path-safety";
 
 export type AvailableModel = {
   id: string;
@@ -297,18 +298,6 @@ function isPathWithinBase(targetPath: string, basePath: string): boolean {
     ? basePath
     : `${basePath}${path.sep}`;
   return targetPath.startsWith(baseWithSep);
-}
-
-export function isUnsafePath(filePath: string): boolean {
-  // 絶対パスかチェック（Unix: / で始まる、Windows: ドライブレター）
-  if (filePath.startsWith("/") || /^[a-zA-Z]:\\/.test(filePath)) {
-    return true;
-  }
-  // '..' を含むパスを拒否
-  if (filePath.includes("..")) {
-    return true;
-  }
-  return false;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
