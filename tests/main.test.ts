@@ -11,7 +11,8 @@ import { NOOP_LOGGER } from "../src/logging";
 import type { ModelSettingsService } from "../src/config/model-settings-service";
 import type { AppContext, CreateAppContextOptions } from "../src/main";
 import { STARTUP_BANNER, createAppContext, startApplication, startServers } from "../src/main";
-import type { CreateProxyAppOptions } from "../src/proxy/proxy-router";
+import { createProxyApp, type CreateProxyAppOptions } from "../src/proxy/proxy-router";
+import type { TransformService } from "../src/proxy/transform-service";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 
 const mockModelSettingsService: ModelSettingsService = {
@@ -34,6 +35,18 @@ function createLogCollector() {
     error: (message, context) => entries.push({ level: "error", message, context }),
   };
   return { entries, logger };
+}
+
+function createTransformServiceStub(
+  onRequest?: (request: ChatCompletionRequest) => void,
+  response: unknown = { id: "resp-1" }
+): TransformService {
+  return {
+    handleCompletion: async (request) => {
+      onRequest?.(request);
+      return { ok: true, value: response };
+    },
+  };
 }
 
 describe("main", () => {
@@ -140,6 +153,100 @@ describe("createAppContext model routing", () => {
     expect(result.request.messages[0]).toMatchObject({
       role: "user",
       content: "hello",
+    });
+  });
+});
+
+describe("createAppContext proxy integration", () => {
+  it("returns responses with routing enabled", async () => {
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => ["@fast"],
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedRequest: ChatCompletionRequest | null = null;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      modelAliasConfigService: aliasConfigService,
+      createProxyApp: (options) =>
+        createProxyApp({
+          transformService: createTransformServiceStub(
+            (request) => {
+              capturedRequest = request;
+            },
+            { id: "resp-routing" }
+          ),
+          modelCatalog: options.modelCatalog,
+          modelRoutingService: options.modelRoutingService,
+        }),
+    });
+
+    expect(context.modelAliasConfigService).toBe(aliasConfigService);
+
+    const response = await context.proxyApp.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3-flash",
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "@fast hello" }],
+            },
+          ],
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "resp-routing" });
+    expect(capturedRequest).toMatchObject({
+      model: "gemini-fast",
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("returns responses without routing configured", async () => {
+    let capturedRequest: ChatCompletionRequest | null = null;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      createProxyApp: (options) =>
+        createProxyApp({
+          transformService: createTransformServiceStub(
+            (request) => {
+              capturedRequest = request;
+            },
+            { id: "resp-pass" }
+          ),
+          modelCatalog: options.modelCatalog,
+          modelRoutingService: options.modelRoutingService,
+        }),
+    });
+
+    expect(context.modelRoutingService).toBeUndefined();
+
+    const response = await context.proxyApp.request(
+      "http://localhost/v1/chat/completions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "gemini-3-flash",
+          messages: [{ role: "user", content: "Hello." }],
+        }),
+      }
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "resp-pass" });
+    expect(capturedRequest).toMatchObject({
+      model: "gemini-3-flash",
+      messages: [{ role: "user", content: "Hello." }],
     });
   });
 });
