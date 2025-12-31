@@ -228,7 +228,12 @@ describe("Proxy router", () => {
         routedRequest = request;
         callSequence.push("route");
         const lastMessage = request.messages[request.messages.length - 1];
-        routedContent = lastMessage?.role === "user" ? lastMessage.content : null;
+        if (lastMessage?.role === "user") {
+          const content = lastMessage.content;
+          routedContent = typeof content === "string" ? content : null;
+        } else {
+          routedContent = null;
+        }
         return {
           request: {
             ...request,
