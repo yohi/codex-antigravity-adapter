@@ -2,7 +2,10 @@ import { describe, expect, it } from "bun:test";
 
 import type { ModelAliasConfigService } from "../src/config/model-alias-config-service";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
-import { createModelRoutingService } from "../src/proxy/model-routing-service";
+import {
+  createModelRoutingService,
+  getLatestUserMessageContent,
+} from "../src/proxy/model-routing-service";
 
 function createAliasConfigStub(): ModelAliasConfigService {
   return {
@@ -30,5 +33,26 @@ describe("ModelRoutingService", () => {
     expect(result.routed).toBe(false);
     expect(result.detectedAlias).toBeUndefined();
     expect(result.originalModel).toBeUndefined();
+  });
+});
+
+describe("getLatestUserMessageContent", () => {
+  it("returns null when there is no user message", () => {
+    const messages: ChatCompletionRequest["messages"] = [
+      { role: "system", content: "system" },
+      { role: "assistant", content: "ack" },
+    ];
+
+    expect(getLatestUserMessageContent(messages)).toBeNull();
+  });
+
+  it("returns the content of the latest user message", () => {
+    const messages: ChatCompletionRequest["messages"] = [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "ack" },
+      { role: "user", content: "second" },
+    ];
+
+    expect(getLatestUserMessageContent(messages)).toBe("second");
   });
 });
