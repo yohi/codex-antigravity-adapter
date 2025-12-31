@@ -121,7 +121,7 @@
   - エイリアス設定のロードエラーをログに記録する
   - _Requirements: 1.1, 1.2_
 
-- [ ] 5.2 createAppContext にルーティングサービスを追加する
+- [x] 5.2 createAppContext にルーティングサービスを追加する
   - ModelRoutingService を作成し、ModelAliasConfigService を依存として注入する
   - ルーティングサービスを createProxyApp に渡す
   - アプリケーションコンテキストの型定義を更新する
