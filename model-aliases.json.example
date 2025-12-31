@@ -1,5 +1,3 @@
-// Copy this file to model-aliases.json and remove comment lines.
-// Keys are alias tags (e.g., "@fast"); values are target model IDs.
 {
   "@fast": "gemini-3-flash",
   "@think": "claude-sonnet-4-5-thinking",

@@ -1,76 +1,58 @@
-import { describe, expect, it } from "bun:test";
-
+import { describe, it, expect } from "bun:test";
 import { detectAlias } from "../../src/utils/detect-alias";
 
 describe("detectAlias", () => {
-  it("returns non-detection and preserves content when no @ prefix", () => {
-    const content = "hello @fast";
-    const result = detectAlias(content, new Set(["@fast"]));
+  const aliases = new Set(["@fast", "@think", "@pro"]);
 
-    expect(result.alias).toBeNull();
-    expect(result.remainingContent).toBe(content);
-  });
-
-  it("detects alias when followed by a space and removes the tag", () => {
-    const result = detectAlias("@fast hello", new Set(["@fast"]));
-
+  it("should detect alias at the beginning of content", () => {
+    const content = "@fast Tell me a joke";
+    const result = detectAlias(content, aliases);
     expect(result.alias).toBe("@fast");
-    expect(result.remainingContent).toBe("hello");
+    expect(result.remainingContent).toBe("Tell me a joke");
   });
 
-  it("detects alias when content is only the alias", () => {
-    const result = detectAlias("@fast", new Set(["@fast"]));
+  it("should detect alias with newline after", () => {
+    const content = "@think\nAnalysis started";
+    const result = detectAlias(content, aliases);
+    expect(result.alias).toBe("@think");
+    expect(result.remainingContent).toBe("Analysis started");
+  });
 
+  it("should detect alias exactly matching content", () => {
+    const content = "@fast";
+    const result = detectAlias(content, aliases);
     expect(result.alias).toBe("@fast");
     expect(result.remainingContent).toBe("");
   });
 
-  it("does not detect partial alias matches", () => {
-    const result = detectAlias("@faster hello", new Set(["@fast"]));
-
-    expect(result.alias).toBeNull();
-    expect(result.remainingContent).toBe("@faster hello");
+  it("should return null if content does not start with @", () => {
+    const content = "Hello @fast world";
+    const result = detectAlias(content, aliases);
+    expect(result.alias).toBe(null);
+    expect(result.remainingContent).toBe(content);
   });
 
-  it("does not detect unknown aliases", () => {
-    const result = detectAlias("@unknown hello", new Set(["@fast"]));
-
-    expect(result.alias).toBeNull();
-    expect(result.remainingContent).toBe("@unknown hello");
+  it("should return null for unknown alias", () => {
+    const content = "@unknown request";
+    const result = detectAlias(content, aliases);
+    expect(result.alias).toBe(null);
+    expect(result.remainingContent).toBe(content);
   });
 
-  it("returns the remaining content after removing alias and one space", () => {
-    const result = detectAlias("@fast hello world", new Set(["@fast"]));
-
-    expect(result.alias).toBe("@fast");
-    expect(result.remainingContent).toBe("hello world");
+  it("should return null for partial match", () => {
+    const content = "@faster request";
+    const result = detectAlias(content, aliases);
+    expect(result.alias).toBe(null);
+    expect(result.remainingContent).toBe(content);
   });
-
-  it("keeps remainingContent equal to content when alias is not detected", () => {
-    const cases = [
-      { content: "hello", aliases: new Set(["@fast"]) },
-      { content: "hello @fast", aliases: new Set(["@fast"]) },
-      { content: "@slow hello", aliases: new Set(["@fast"]) },
-      { content: "@fastest hi", aliases: new Set(["@fast"]) },
-    ];
-
-    for (const { content, aliases } of cases) {
-      const result = detectAlias(content, aliases);
-
-      expect(result.alias).toBeNull();
-      expect(result.remainingContent).toBe(content);
-    }
-  });
-
-  it("ensures detected aliases are a prefix of the content", () => {
-    const aliases = new Set(["@fast", "@pro"]);
-    const cases = ["@fast hello", "@fast", "@pro test", "@pro"];
-
-    for (const content of cases) {
-      const result = detectAlias(content, aliases);
-
-      expect(result.alias).not.toBeNull();
-      expect(content.startsWith(result.alias ?? "")).toBe(true);
-    }
+  
+  it("should remove immediate following space", () => {
+     const content = "@fast  Double space";
+     const result = detectAlias(content, aliases);
+     expect(result.alias).toBe("@fast");
+     // Removes alias "@fast" and ONE immediate following whitespace.
+     // "@fast " (length 6) -> removed.
+     // remaining: " Double space" (starts with space)
+     expect(result.remainingContent).toBe(" Double space");
   });
 });

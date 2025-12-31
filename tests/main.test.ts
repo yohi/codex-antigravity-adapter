@@ -133,7 +133,6 @@ describe("createAppContext model routing", () => {
       },
     });
 
-    expect(listAliasesCalls).toBe(1);
     expect(context.modelRoutingService).toBeDefined();
     expect(capturedProxyOptions?.modelRoutingService).toBe(context.modelRoutingService);
 
@@ -148,6 +147,7 @@ describe("createAppContext model routing", () => {
     };
 
     const result = routingService.route(request);
+    expect(listAliasesCalls).toBe(1); // Expect call during route
     expect(result.routed).toBe(true);
     expect(result.request.model).toBe("gemini-fast");
     expect(result.request.messages[0]).toMatchObject({
