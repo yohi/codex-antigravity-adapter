@@ -10,7 +10,9 @@ import type { Logger } from "../src/logging";
 import { NOOP_LOGGER } from "../src/logging";
 import type { ModelSettingsService } from "../src/config/model-settings-service";
 import type { AppContext, CreateAppContextOptions } from "../src/main";
-import { STARTUP_BANNER, startApplication, startServers } from "../src/main";
+import { STARTUP_BANNER, createAppContext, startApplication, startServers } from "../src/main";
+import type { CreateProxyAppOptions } from "../src/proxy/proxy-router";
+import type { ChatCompletionRequest } from "../src/transformer/schema";
 
 const mockModelSettingsService: ModelSettingsService = {
   load: async () => ({
@@ -92,6 +94,53 @@ describe("main", () => {
     signalHandlers.SIGINT();
     expect(authStopCalls).toBe(1);
     expect(proxyStopCalls).toBe(1);
+  });
+});
+
+describe("createAppContext model routing", () => {
+  it("creates a routing service and passes it to createProxyApp", () => {
+    let listAliasesCalls = 0;
+    const aliasConfigService: ModelAliasConfigService = {
+      getTargetModel: (alias) => (alias === "@fast" ? "gemini-fast" : undefined),
+      hasAlias: (alias) => alias === "@fast",
+      listAliases: () => {
+        listAliasesCalls += 1;
+        return ["@fast"];
+      },
+      getAll: () => new Map([["@fast", "gemini-fast"]]),
+    };
+    let capturedProxyOptions: CreateProxyAppOptions | undefined;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      modelAliasConfigService: aliasConfigService,
+      createProxyApp: (options) => {
+        capturedProxyOptions = options;
+        return new Hono();
+      },
+    });
+
+    expect(listAliasesCalls).toBe(1);
+    expect(context.modelRoutingService).toBeDefined();
+    expect(capturedProxyOptions?.modelRoutingService).toBe(context.modelRoutingService);
+
+    const routingService = context.modelRoutingService;
+    if (!routingService) {
+      throw new Error("modelRoutingService is undefined");
+    }
+
+    const request: ChatCompletionRequest = {
+      model: "gemini-3-pro-high",
+      messages: [{ role: "user", content: "@fast hello" }],
+    };
+
+    const result = routingService.route(request);
+    expect(result.routed).toBe(true);
+    expect(result.request.model).toBe("gemini-fast");
+    expect(result.request.messages[0]).toMatchObject({
+      role: "user",
+      content: "hello",
+    });
   });
 });
 

@@ -16,6 +16,10 @@ import {
 } from "./config/model-settings-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
+import {
+  createModelRoutingService,
+  type ModelRoutingService,
+} from "./proxy/model-routing-service";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
 import { createTransformService, type TransformService } from "./proxy/transform-service";
 import { DEFAULT_SIGNATURE_CACHE, SESSION_ID } from "./transformer/helpers";
@@ -40,6 +44,7 @@ export type CreateAppContextOptions = {
   logger?: Logger;
   modelCatalog?: ModelCatalog;
   modelAliasConfigService?: ModelAliasConfigService;
+  createProxyApp?: typeof createProxyApp;
 };
 
 export type AppContext = {
@@ -49,6 +54,7 @@ export type AppContext = {
   authService: OAuthAuthService;
   transformService: TransformService;
   modelAliasConfigService?: ModelAliasConfigService;
+  modelRoutingService?: ModelRoutingService;
 };
 
 export function initializeRuntime(): { sessionId: string } {
@@ -60,6 +66,7 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
   const logger = options.logger ?? NOOP_LOGGER;
   const modelCatalog = options.modelCatalog;
   const modelAliasConfigService = options.modelAliasConfigService;
+  const buildProxyApp = options.createProxyApp ?? createProxyApp;
   initializeRuntime();
 
   const tokenStore = new FileTokenStore({ logger });
@@ -67,7 +74,14 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
   const requester = createAntigravityRequester({ logger });
   const transformService = createTransformService({ tokenStore, requester });
   const authApp = createAuthApp(authService);
-  const proxyApp = createProxyApp({ transformService, modelCatalog });
+  const modelRoutingService = modelAliasConfigService
+    ? createModelRoutingService({ aliasConfig: modelAliasConfigService, logger })
+    : undefined;
+  const proxyApp = buildProxyApp({
+    transformService,
+    modelCatalog,
+    modelRoutingService,
+  });
 
   return {
     authApp,
@@ -76,6 +90,7 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
     authService,
     transformService,
     modelAliasConfigService,
+    modelRoutingService,
   };
 }
 
