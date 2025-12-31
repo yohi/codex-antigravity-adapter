@@ -9,8 +9,8 @@ OpenAI 本家 API へのパススルー機能を実装するためのギャッ�
   - `ModelRoutingService` の役割は現在「同一プロバイダー内でのモデル置換」であり、プロバイダー自体の切り替えは考慮されていない。
   - `ModelCatalog` が Antigravity 向けモデルしか返さない（OpenAI モデルが一覧に含まれない可能性）。
   - `TransformService` は Antigravity への変換・送信に特化しており、OpenAI 向けのパススルーロジックとは互換性がない。
-- **推奨アプローチ**: **ハイブリッド・アプローチ（Option C）**。
-  - `proxy-router.ts` で分岐ロジックを追加し、既存の `TransformService` と新設する `OpenAIService` を切り替える構成が最もクリーンです。
+- **推奨アプローチ**: **Router レベルでの分岐（Option B）**。
+  - `proxy-router.ts` で分岐ロジックを追加し、既存の `TransformService` と新設する `OpenAIService` を切り替える構成が最もクリーンで安全です。
 
 ## 2. 現状調査 (Current State)
 
@@ -101,6 +101,17 @@ if (shouldRouteToOpenAI(routedRequest.model)) {
     return options.transformService.handleCompletion(routedRequest);
 }
 ```
+
+### OpenAI モデルのディスカバリー対応
+**選択したアプローチ**: フォローアップタスクとして追跡
+
+- **現状**: `GET /v1/models` エンドポイントは Antigravity モデルのみを返す。
+- **影響**: クライアントは OpenAI モデルを自動検出できない。ただし、クライアント側で手動指定すれば動作する。
+- **判定**: 本フェーズでは `/v1/chat/completions` のルーティング機能に集中し、モデルカタログへの OpenAI モデル追加は後続タスクとして扱う。
+- **フォローアップタスク**:
+  1. `ModelCatalog` に OpenAI モデルエントリ（例: `gpt-4`, `gpt-3.5-turbo`）を追加する設計。
+  2. `GET /v1/models` レスポンスに OpenAI モデルを含める実装。
+  3. OpenAI API からの動的モデル取得（オプション）を検討。
 
 ### 労力とリスク
 - **Effort**: **S (1-3 days)** - ロジックは単純で、既存コードへの侵襲も少ない。
