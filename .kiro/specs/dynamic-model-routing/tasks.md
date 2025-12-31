@@ -96,7 +96,7 @@
   - _Requirements: 2.1, 2.2, 3.1, 3.2, 4.3, 4.4, 5.1_
 
 - [ ] 4. プロキシルータへの統合
-- [ ] 4.1 proxy-router.ts にルーティング呼び出しを追加する
+- [x] 4.1 proxy-router.ts にルーティング呼び出しを追加する
   - ChatCompletionRequestSchema.safeParse 後にルーティングサービスを呼び出す位置を確認する
   - modelRoutingService.route を呼び出し、RoutingResult を取得する
   - ルーティング後のリクエストを transformService.handleCompletion に渡す
