@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import type { ModelCatalog } from "../src/config/model-settings-service";
 import { DEFAULT_FIXED_MODEL_IDS } from "../src/config/model-settings-service";
 import { createProxyApp, startProxyServer } from "../src/proxy/proxy-router";
+import type { ModelRoutingService } from "../src/proxy/model-routing-service";
 
 type TransformService = {
   handleCompletion: (
@@ -188,6 +189,55 @@ describe("Proxy router", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "resp-1" });
     expect(captured).toBeTruthy();
+  });
+
+  it("routes requests before delegating to TransformService when configured", async () => {
+    let routedRequest: unknown | null = null;
+    let transformedRequest: unknown | null = null;
+    const modelRoutingService: ModelRoutingService = {
+      route: (request) => {
+        routedRequest = request;
+        return {
+          request: {
+            ...request,
+            model: "gemini-3-pro-high",
+          },
+          routed: true,
+          detectedAlias: "@fast",
+          originalModel: request.model,
+        };
+      },
+    };
+    const app = createProxyApp({
+      transformService: createTransformServiceStub({
+        handleCompletion: async (request) => {
+          transformedRequest = request;
+          return { ok: true, value: { id: "resp-2" } };
+        },
+      }),
+      modelRoutingService,
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gemini-3-flash",
+        stream: false,
+        messages: [{ role: "user", content: "@fast hello" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "resp-2" });
+    expect(routedRequest).toMatchObject({
+      model: "gemini-3-flash",
+      messages: [{ role: "user", content: "@fast hello" }],
+    });
+    expect(transformedRequest).toMatchObject({
+      model: "gemini-3-pro-high",
+      messages: [{ role: "user", content: "@fast hello" }],
+    });
   });
 
   it("returns a fixed model list from /v1/models", async () => {
