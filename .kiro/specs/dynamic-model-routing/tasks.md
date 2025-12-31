@@ -102,13 +102,13 @@
   - ルーティング後のリクエストを transformService.handleCompletion に渡す
   - _Requirements: 2.4, 6.1_
 
-- [ ] 4.2 CreateProxyAppOptions にルーティングサービスを追加する
+- [x] 4.2 CreateProxyAppOptions にルーティングサービスを追加する
   - modelRoutingService を optional プロパティとして追加する
   - ルーティングサービスが存在しない場合のフォールバック処理を実装する
   - 既存のスキーマ検証と変換パイプラインを保護する
   - _Requirements: 6.4_
 
-- [ ] 4.3 プロキシルータ統合の単体テストを作成する
+- [x] 4.3 プロキシルータ統合の単体テストを作成する
   - スキーマ検証後にルーティングが呼ばれることをテストする
   - ルーティング後に transformService が呼ばれることをテストする
   - ルーティングサービスが存在しない場合のフォールバックをテストする

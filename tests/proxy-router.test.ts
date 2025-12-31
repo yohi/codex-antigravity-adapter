@@ -100,7 +100,15 @@ describe("Proxy router", () => {
     const response = await app.request("http://localhost/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "gemini-3-flash", messages: [] }),
+      body: JSON.stringify({
+        model: "gemini-3-flash",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Hello." }],
+          },
+        ],
+      }),
     });
 
     expect(response.status).toBe(401);
@@ -137,7 +145,15 @@ describe("Proxy router", () => {
     const response = await app.request("http://localhost/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "gemini-3-flash", messages: [] }),
+      body: JSON.stringify({
+        model: "gemini-3-flash",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Hello." }],
+          },
+        ],
+      }),
     });
 
     expect(response.status).toBe(429);
@@ -169,7 +185,7 @@ describe("Proxy router", () => {
     expect(payload.error.code).toBe("invalid_request");
   });
 
-  it("delegates to TransformService for valid requests", async () => {
+  it("delegates to TransformService with validated request when routing is not configured", async () => {
     let captured: unknown | null = null;
     const app = createProxyApp({
       transformService: createTransformServiceStub({
@@ -183,20 +199,36 @@ describe("Proxy router", () => {
     const response = await app.request("http://localhost/v1/chat/completions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "gemini-3-flash", messages: [] }),
+      body: JSON.stringify({
+        model: "gemini-3-flash",
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Hello." }],
+          },
+        ],
+      }),
     });
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ id: "resp-1" });
-    expect(captured).toBeTruthy();
+    expect(captured).toMatchObject({
+      model: "gemini-3-flash",
+      messages: [{ role: "user", content: "Hello." }],
+    });
   });
 
   it("routes requests before delegating to TransformService when configured", async () => {
     let routedRequest: unknown | null = null;
     let transformedRequest: unknown | null = null;
+    const callSequence: string[] = [];
+    let routedContent: string | null = null;
     const modelRoutingService: ModelRoutingService = {
       route: (request) => {
         routedRequest = request;
+        callSequence.push("route");
+        const lastMessage = request.messages[request.messages.length - 1];
+        routedContent = lastMessage?.role === "user" ? lastMessage.content : null;
         return {
           request: {
             ...request,
@@ -212,6 +244,7 @@ describe("Proxy router", () => {
       transformService: createTransformServiceStub({
         handleCompletion: async (request) => {
           transformedRequest = request;
+          callSequence.push("transform");
           return { ok: true, value: { id: "resp-2" } };
         },
       }),
@@ -224,7 +257,12 @@ describe("Proxy router", () => {
       body: JSON.stringify({
         model: "gemini-3-flash",
         stream: false,
-        messages: [{ role: "user", content: "@fast hello" }],
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "@fast hello" }],
+          },
+        ],
       }),
     });
 
@@ -238,6 +276,8 @@ describe("Proxy router", () => {
       model: "gemini-3-pro-high",
       messages: [{ role: "user", content: "@fast hello" }],
     });
+    expect(callSequence).toEqual(["route", "transform"]);
+    expect(routedContent).toBe("@fast hello");
   });
 
   it("returns a fixed model list from /v1/models", async () => {
