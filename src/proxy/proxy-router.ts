@@ -7,6 +7,8 @@ import {
 import type { ModelRoutingService } from "./model-routing-service";
 import { ChatCompletionRequestSchema } from "../transformer/schema";
 import type { ProxyError, TransformService } from "./transform-service";
+import type { OpenAIPassthroughService } from "./openai-passthrough-service";
+import { isAntigravityModel } from "./routing-utils";
 
 type ServeOptions = {
   fetch: (request: Request) => Response | Promise<Response>;
@@ -22,6 +24,7 @@ export type ProxyServerOptions = {
 
 export type CreateProxyAppOptions = {
   transformService: TransformService;
+  openaiPassthroughService?: OpenAIPassthroughService;
   modelCatalog?: ModelCatalog;
   modelRoutingService?: ModelRoutingService;
 };
@@ -67,9 +70,38 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
 
     const routingResult = options.modelRoutingService?.route(parsed.data);
     const routedRequest = routingResult?.request ?? parsed.data;
-    const result = normalizeTransformResult(
-      await options.transformService.handleCompletion(routedRequest)
-    );
+
+    let result;
+    if (isAntigravityModel(routedRequest.model)) {
+      result = normalizeTransformResult(
+        await options.transformService.handleCompletion(routedRequest)
+      );
+    } else {
+      if (!options.openaiPassthroughService) {
+        return c.json(
+          {
+            error: {
+              type: "server_error",
+              code: "internal_error",
+              message: "OpenAI Passthrough Service is not configured.",
+            },
+          },
+          500
+        );
+      }
+      const headers: Record<string, string> = {};
+      c.req.raw.headers.forEach((v, k) => {
+        headers[k] = v;
+      });
+
+      result = normalizeTransformResult(
+        await options.openaiPassthroughService.handleCompletion(
+          routedRequest,
+          headers
+        )
+      );
+    }
+
     if (!result.ok) {
       const status = result.error.statusCode || 500;
       const mapped = resolveProxyErrorMapping(result.error);

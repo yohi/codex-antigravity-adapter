@@ -14,12 +14,20 @@ import {
   type ModelCatalog,
   type ModelSettingsService,
 } from "./config/model-settings-service";
+import {
+  createOpenAIConfigService,
+  type OpenAIConfigService,
+} from "./config/openai-config-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
 import {
   createModelRoutingService,
   type ModelRoutingService,
 } from "./proxy/model-routing-service";
+import {
+  createOpenAIPassthroughService,
+  type OpenAIPassthroughService,
+} from "./proxy/openai-passthrough-service";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
 import { createTransformService, type TransformService } from "./proxy/transform-service";
 import { DEFAULT_SIGNATURE_CACHE, SESSION_ID } from "./transformer/helpers";
@@ -55,6 +63,8 @@ export type AppContext = {
   transformService: TransformService;
   modelAliasConfigService?: ModelAliasConfigService;
   modelRoutingService?: ModelRoutingService;
+  openaiConfigService: OpenAIConfigService;
+  openaiPassthroughService: OpenAIPassthroughService;
 };
 
 export function initializeRuntime(): { sessionId: string } {
@@ -73,6 +83,20 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
   const authService = new OAuthAuthService({ tokenStore });
   const requester = createAntigravityRequester({ logger });
   const transformService = createTransformService({ tokenStore, requester });
+
+  const openaiConfigService = createOpenAIConfigService();
+  const openaiPassthroughService = createOpenAIPassthroughService({
+    configService: openaiConfigService,
+  });
+
+  if (openaiConfigService.isConfigured()) {
+    logger.info("OpenAI passthrough service initialized with server API key");
+  } else {
+    logger.info(
+      "OpenAI passthrough service initialized in Auth Passthrough mode (client Authorization header will be used)"
+    );
+  }
+
   const authApp = createAuthApp(authService);
   const modelRoutingService = modelAliasConfigService
     ? createModelRoutingService({ aliasConfig: modelAliasConfigService, logger })
@@ -81,6 +105,7 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
     transformService,
     modelCatalog,
     modelRoutingService,
+    openaiPassthroughService,
   });
 
   return {
@@ -91,6 +116,8 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
     transformService,
     modelAliasConfigService,
     modelRoutingService,
+    openaiConfigService,
+    openaiPassthroughService,
   };
 }
 
