@@ -570,7 +570,7 @@ OPENAI_API_KEY_TEST=sk-test-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 **重要**: `.env.test` ファイルを `.gitignore` に追加し、Git リポジトリにコミットしない:
 
-```
+```text
 # .gitignore
 .env
 .env.test
