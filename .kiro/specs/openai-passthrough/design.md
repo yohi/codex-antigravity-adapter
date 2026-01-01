@@ -144,28 +144,47 @@ flowchart TD
     E -->|Yes| F[504 router_network_timeout]
     E -->|No| G{OpenAI Response?}
     G -->|Error Response| H[Passthrough Error Verbatim]
-    G -->|Success| I[Passthrough Response]
-    G -->|Invalid Body| J[Received Status router_upstream_response_invalid]
+    G -->|Success| I{Streaming?}
+    I -->|No| J[Passthrough Response]
+    I -->|Yes| K[Start Stream Relay]
+    K --> L{Stream Error?}
+    L -->|Before Start| M[504 router_network_timeout]
+    L -->|After Start| N[Transparent Relay - Client Receives Partial Stream]
+    G -->|Invalid Body| O[Received Status router_upstream_response_invalid]
 ```
+
+#### ストリーミングエラーハンドリングの詳細
+
+**ストリーム開始前のエラー**:
+- ネットワークエラー、タイムアウト、OpenAI からの即座のエラーレスポンスは通常の HTTP エラーとして処理
+- クライアントは標準的な JSON エラーレスポンスを受信
+
+**ストリーム開始後のエラー**:
+- OpenAI が SSE ストリーム内に `data: [DONE]` 以外のエラーメッセージを送信する場合、そのまま透過中継
+- 接続が途中で切断された場合:
+  - クライアントは不完全なストリームを受信（最後の `data: [DONE]` を受信しない）
+  - ルーターは介入せず、クライアント側でタイムアウトまたは接続切断を検出
+- **設計判断**: 透過性を優先し、ストリーム開始後のエラー処理をクライアントに委譲
 
 ## Requirements Traceability
 
 | Requirement | Summary | Components | Interfaces | Flows |
 |-------------|---------|------------|------------|-------|
-| 1.1, 1.2, 1.3 | OPENAI_API_KEY 環境変数管理 | OpenAIConfigService | getApiKey() | - |
+| 1.1, 1.2, 1.3 | OPENAI_API_KEY 環境変数管理 | OpenAIConfigService, main.ts | getApiKey(), isConfigured() | Initialization |
 | 2.1, 2.2, 2.3 | モデル名によるルーティング | shouldRouteToOpenAI, proxy-router | - | Request Routing |
 | 3.1, 3.2, 3.3, 3.4 | パススルー忠実性 | OpenAIPassthroughService | handleCompletion() | Request Routing |
 | 4.1-4.5 | エラー処理 | OpenAIPassthroughService | createOpenAIError() | Error Handling |
-| 5.1, 5.2, 5.3 | 透過性・設定簡素化 | proxy-router | - | Request Routing |
+| 5.1, 5.2, 5.3 | 透過性・設定簡素化 | proxy-router, main.ts | - | Request Routing, Initialization |
 
 ## Components and Interfaces
 
 | Component | Domain/Layer | Intent | Req Coverage | Key Dependencies | Contracts |
 |-----------|--------------|--------|--------------|------------------|-----------|
-| OpenAIPassthroughService | proxy | OpenAI API へのリクエスト透過転送 | 3.1-3.4, 4.1-4.5 | OpenAIConfigService (P0), fetch (P0) | Service |
+| OpenAIPassthroughService | proxy | OpenAI API へのリクエスト透過転送 | 3.1-3.4, 4.1-4.5 | OpenAIConfigService (P0 - injected), fetch (P0) | Service |
 | OpenAIConfigService | config | OPENAI_API_KEY の提供 | 1.1-1.3 | 環境変数 (P0) | Service |
 | shouldRouteToOpenAI | proxy | モデル名に基づくルート判定 | 2.1, 2.2 | - | Utility |
 | proxy-router (拡張) | proxy | ルーティング分岐の追加 | 2.1-2.3, 5.1-5.3 | OpenAIPassthroughService (P0), TransformService (P0) | - |
+| main.ts (拡張) | bootstrap | サービス初期化とワイアリング | 1.1-1.3, 5.1-5.3 | OpenAIConfigService (P0), OpenAIPassthroughService (P0) | - |
 
 ### Proxy Layer
 
@@ -198,10 +217,12 @@ interface OpenAIPassthroughService {
     originalRequest: Request,
     body: ChatCompletionRequest
   ): Promise<Response>;
+  isConfigured(): boolean;
 }
 
 interface CreateOpenAIPassthroughServiceOptions {
-  apiKey: string;
+  configService: OpenAIConfigService;
+  logger?: Logger;
   baseUrl?: string; // default: "https://api.openai.com"
   timeout?: number; // default: 60000 (ms)
 }
@@ -211,20 +232,32 @@ function createOpenAIPassthroughService(
 ): OpenAIPassthroughService;
 ```
 
-- **Preconditions**: `apiKey` が空でないこと
-- **Postconditions**: OpenAI API へのリクエストが送信され、レスポンスが返却される
-- **Invariants**: リクエスト/レスポンスボディはスキーマ変換されない
+- **Preconditions**: `configService` が提供されること
+- **Postconditions**:
+  - `isConfigured()` は `configService.isConfigured()` に委譲
+  - OpenAI API へのリクエストが送信され、レスポンスが返却される
+- **Invariants**:
+  - リクエスト/レスポンスボディはスキーマ変換されない
+  - API キーは `configService.getApiKey()` から取得
 
 ##### Implementation Notes
 
-- **Integration**: 
+- **Integration**:
   - `fetch` API を使用して OpenAI API と通信
+  - API キーは `configService.getApiKey()` から実行時に取得
   - ストリーミング時は `ReadableStream` をそのまま返却
-- **Validation**: 
+  - **ストリーミングエラーハンドリング**:
+    - ストリーム開始前のエラー（ネットワークエラー、タイムアウト）: 標準的な HTTP エラーレスポンスとして返却（504 など）
+    - ストリーム開始後のエラー: OpenAI が SSE ストリーム内でエラーイベントを送信する場合、そのまま透過中継
+    - ストリーム途中での接続切断: クライアントは不完全なストリームを受信（透過中継のため、ルーターは介入しない）
+    - タイムアウト検出: `fetch` の `signal` オプションに `AbortSignal.timeout()` を使用し、ストリーム開始前のタイムアウトのみ検出（開始後のタイムアウトは検出しない）
+- **Validation**:
   - `model` フィールドの存在チェックは Router 側で実施済み
-  - API キー未設定時は早期エラー返却
-- **Risks**: 
+  - `isConfigured()` は `configService.isConfigured()` に委譲
+  - API キー未設定時は `handleCompletion()` で早期エラー返却（または Router 側で事前チェック）
+- **Risks**:
   - OpenAI API のレート制限 — `Retry-After` ヘッダーを透過
+  - ストリーム中断の検出不可 — 透過中継のため、ルーターレベルでの検出・ロギングは困難
 
 ---
 
@@ -290,6 +323,144 @@ function shouldRouteToOpenAI(model: string): boolean;
 
 ---
 
+## Service Initialization and Wiring
+
+### Initialization Flow
+
+OpenAI Passthrough 機能のサービス初期化は、既存の `main.ts` の `createAppContext` 関数に統合される。初期化順序は以下の通り:
+
+```mermaid
+graph TD
+    A[startApplication] --> B[createAppContext]
+    B --> C[createOpenAIConfigService]
+    C --> D[createOpenAIPassthroughService with configService]
+    D --> E[createProxyApp with openaiService]
+    E --> F[Return AppContext]
+
+    Note1[Note: openaiService.isConfigured checks<br/>if OPENAI_API_KEY is set at runtime]
+    D -.-> Note1
+```
+
+### Dependency Graph
+
+```mermaid
+graph LR
+    Env[OPENAI_API_KEY env var] --> ConfigService[OpenAIConfigService]
+    ConfigService --> PassthroughService[OpenAIPassthroughService]
+    PassthroughService --> ProxyRouter[proxy-router]
+    TransformService[TransformService - existing] --> ProxyRouter
+    ModelRoutingService[ModelRoutingService - existing] --> ProxyRouter
+```
+
+### Component Initialization Responsibilities
+
+| Component | Created By | Initialization Location | Ownership | Notes |
+|-----------|-----------|------------------------|-----------|-------|
+| OpenAIConfigService | createOpenAIConfigService() | createAppContext() in main.ts | AppContext | Always created |
+| OpenAIPassthroughService | createOpenAIPassthroughService({configService, ...}) | createAppContext() in main.ts | AppContext | Always created; receives OpenAIConfigService as dependency |
+| proxy-router (updated) | createProxyApp(options) | createAppContext() in main.ts | AppContext | Receives OpenAIPassthroughService via options |
+
+### Implementation in main.ts
+
+#### Type Definitions
+
+```typescript
+// AppContext への追加
+export type AppContext = {
+  authApp: Hono;
+  proxyApp: Hono;
+  tokenStore: FileTokenStore;
+  authService: OAuthAuthService;
+  transformService: TransformService;
+  modelAliasConfigService?: ModelAliasConfigService;
+  modelRoutingService?: ModelRoutingService;
+  openaiConfigService?: OpenAIConfigService;        // New
+  openaiService?: OpenAIPassthroughService;          // New
+};
+```
+
+#### createAppContext 拡張
+
+```typescript
+export function createAppContext(options: CreateAppContextOptions = {}): AppContext {
+  const logger = options.logger ?? NOOP_LOGGER;
+  const modelCatalog = options.modelCatalog;
+  const modelAliasConfigService = options.modelAliasConfigService;
+  const buildProxyApp = options.createProxyApp ?? createProxyApp;
+  initializeRuntime();
+
+  // Existing services
+  const tokenStore = new FileTokenStore({ logger });
+  const authService = new OAuthAuthService({ tokenStore });
+  const requester = createAntigravityRequester({ logger });
+  const transformService = createTransformService({ tokenStore, requester });
+  const authApp = createAuthApp(authService);
+  const modelRoutingService = modelAliasConfigService
+    ? createModelRoutingService({ aliasConfig: modelAliasConfigService, logger })
+    : undefined;
+
+  // New: OpenAI services initialization
+  const openaiConfigService = createOpenAIConfigService();
+  const openaiService = createOpenAIPassthroughService({
+    configService: openaiConfigService,
+    logger,
+  });
+
+  // Logging
+  if (openaiService.isConfigured()) {
+    logger.info("OpenAI passthrough service initialized");
+  } else {
+    logger.debug("OpenAI passthrough service not initialized (OPENAI_API_KEY not set)");
+  }
+
+  // Proxy app with openaiService
+  const proxyApp = buildProxyApp({
+    transformService,
+    modelCatalog,
+    modelRoutingService,
+    openaiService,  // New
+  });
+
+  return {
+    authApp,
+    proxyApp,
+    tokenStore,
+    authService,
+    transformService,
+    modelAliasConfigService,
+    modelRoutingService,
+    openaiConfigService,  // New
+    openaiService,        // New
+  };
+}
+```
+
+#### Key Design Decisions
+
+1. **Dependency Injection Pattern**:
+   - `OpenAIPassthroughService` は `OpenAIConfigService` への依存を `CreateOpenAIPassthroughServiceOptions.configService` で受け取る
+   - `OpenAIPassthroughService.isConfigured()` は `configService.isConfigured()` に委譲
+   - これにより、設定状態の単一責任が `OpenAIConfigService` に保たれる
+
+2. **Always Initialize Services**:
+   - `OpenAIConfigService` と `OpenAIPassthroughService` は両方とも常に作成される
+   - `OPENAI_API_KEY` 未設定時も起動は継続し、ランタイムで `isConfigured()` チェック
+   - これにより、Antigravity のみを使用するユーザーは `OPENAI_API_KEY` を設定する必要がない
+
+3. **Wiring Responsibility**:
+   - `main.ts` の `createAppContext` がすべてのサービスの初期化と依存関係の構築を担当
+   - 既存パターン（例: `ModelRoutingService` への `ModelAliasConfigService` 注入）との一貫性を維持
+
+4. **Runtime Configuration Check**:
+   - 環境変数未設定は起動時エラーではなく、ランタイムで 401 エラーとして処理
+   - Router は `openaiService.isConfigured()` で設定状態をチェックし、未設定時は 401 を返却
+
+5. **Testing Seam**:
+   - `CreateAppContextOptions` を通じたファクトリー注入により、テスト時にモックサービスを注入可能
+   - `OpenAIConfigService` のモックにより、API キー設定/未設定の両方のシナリオをテスト可能
+
+---
+
 ### Router Extension
 
 #### proxy-router.ts 拡張
@@ -319,8 +490,16 @@ const routedRequest = routingResult?.request ?? parsed.data;
 
 if (shouldRouteToOpenAI(routedRequest.model)) {
   // OpenAI ルート
-  if (!options.openaiService || !options.openaiService.isConfigured()) {
-    // APIキー未設定またはサービス未注入時は要件1.2に従い401を返す。
+  if (!options.openaiService) {
+    // サービス未注入時は内部エラー（通常発生しない）
+    return c.json(createOpenAIError(
+      "OpenAI service is not initialized",
+      "invalid_request_error",
+      "router_internal_error"
+    ), 500);
+  }
+  if (!options.openaiService.isConfigured()) {
+    // APIキー未設定時は要件1.2に従い401を返す。
     // Antigravityへのサイレントなフォールバックは行わない。
     return c.json(createOpenAIError(
       "OpenAI API key is not configured on the router",
@@ -396,18 +575,21 @@ OpenAI パススルーのエラー処理は以下の方針に従う:
 1. **ルーター側エラー**: 明確な識別子 (`code`) を付与した OpenAI 互換形式
 2. **上流エラー**: OpenAI からのレスポンスをそのまま返却（verbatim）
 3. **ネットワークエラー**: 504 Gateway Timeout として正規化
+4. **ストリーミングエラー**:
+   - ストリーム開始前: 通常の HTTP エラーレスポンス（JSON 形式）
+   - ストリーム開始後: 透過中継を維持し、クライアント側で処理
 
 ### Error Categories and Responses
 
 #### Router-Side Errors (4xx/5xx)
 
-| Error Scenario | HTTP Status | Error Code | Message |
-|----------------|-------------|------------|---------|
-| OPENAI_API_KEY 未設定 | 401 | `router_api_key_missing` | OpenAI API key is not configured on the router |
-| model フィールド欠損 (Req 2.3) | 400 | `null` | Missing required parameter: 'model' |
-| ネットワークタイムアウト (Req 4.3) | 504 | `router_network_timeout` | Failed to connect to OpenAI API: network timeout |
-| 内部エラー (Req 4.4) | 500 | `router_internal_error` | Internal router error occurred while processing OpenAI request |
-| 上流レスポンス不正 (Req 4.5) | (受信ステータス) | `router_upstream_response_invalid` | OpenAI returned an invalid or unparseable response |
+| Error Scenario | HTTP Status | Error Code | Message | Streaming Behavior |
+|----------------|-------------|------------|---------|-------------------|
+| OPENAI_API_KEY 未設定 | 401 | `router_api_key_missing` | OpenAI API key is not configured on the router | N/A (occurs before stream) |
+| model フィールド欠損 (Req 2.3) | 400 | `null` | Missing required parameter: 'model' | N/A (occurs before stream) |
+| ネットワークタイムアウト (Req 4.3) | 504 | `router_network_timeout` | Failed to connect to OpenAI API: network timeout | Only detectable before stream starts |
+| 内部エラー (Req 4.4) | 500 | `router_internal_error` | Internal router error occurred while processing OpenAI request | Only detectable before stream starts |
+| 上流レスポンス不正 (Req 4.5) | (受信ステータス) | `router_upstream_response_invalid` | OpenAI returned an invalid or unparseable response | Only for non-streaming responses |
 
 #### Upstream Errors (Passthrough)
 
@@ -471,8 +653,13 @@ function createOpenAIError(
 ### E2E Tests (環境変数 `RUN_E2E=1` で有効化)
 
 1. **OpenAI API 統合**: 実際の OpenAI API へのリクエスト/レスポンス
-2. **ストリーミング**: SSE ストリームの透過中継
-3. **エラーケース**: 無効な API キーでの 401 パススルー
+2. **ストリーミング**:
+   - SSE ストリームの透過中継
+   - ストリーム開始前のタイムアウトエラー検出
+   - ストリーム完了（`data: [DONE]` 受信）の確認
+3. **エラーケース**:
+   - 無効な API キーでの 401 パススルー
+   - ネットワークタイムアウトでの 504 エラー
 
 ### Performance
 
