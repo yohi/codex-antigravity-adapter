@@ -164,4 +164,76 @@ describe("OpenAIPassthroughService", () => {
     expect(headers.has("Host")).toBe(false);
     expect(headers.has("Content-Length")).toBe(false);
   });
+
+  it("relays streaming responses without buffering", async () => {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode("data: hello\n\n"));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+
+    const fetcher: typeof fetch = async () =>
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+      stream: true,
+    });
+
+    expect(response.headers.get("Content-Type")).toBe("text/event-stream");
+    expect(await response.text()).toBe("data: hello\n\ndata: [DONE]\n\n");
+  });
+
+  it("returns 502 when streaming response body is missing", async () => {
+    const fetcher: typeof fetch = async () =>
+      new Response(null, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+      stream: true,
+    });
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Invalid response format from upstream service",
+        type: "api_error",
+        param: null,
+        code: "invalid_response",
+      },
+    });
+  });
 });
