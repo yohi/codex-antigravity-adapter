@@ -54,7 +54,45 @@ export function createOpenAIPassthroughService(
             "invalid_response"
           );
         }
+        if (!isStream && isJsonResponse(response)) {
+          try {
+            await response.clone().json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return createOpenAIErrorResponse(
+                502,
+                "Invalid response format from upstream service",
+                "api_error",
+                "invalid_response"
+              );
+            }
+            throw error;
+          }
+        }
         return response;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return createOpenAIErrorResponse(
+            502,
+            "Invalid response format from upstream service",
+            "api_error",
+            "invalid_response"
+          );
+        }
+        if (isUpstreamConnectionError(error)) {
+          return createOpenAIErrorResponse(
+            502,
+            "Unable to connect to upstream service",
+            "api_error",
+            "bad_gateway"
+          );
+        }
+        return createOpenAIErrorResponse(
+          500,
+          "Internal router error occurred while processing upstream request",
+          "api_error",
+          "router_internal_error"
+        );
       } finally {
         clearTimeout(timeoutId);
       }
@@ -91,4 +129,22 @@ function createOpenAIErrorResponse(
       "Content-Type": "application/json",
     },
   });
+}
+
+function isJsonResponse(response: Response): boolean {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  return contentType.toLowerCase().includes("application/json");
+}
+
+function isUpstreamConnectionError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return true;
+    }
+    return /timed out/i.test(error.message);
+  }
+  return false;
 }

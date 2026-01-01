@@ -52,7 +52,7 @@ describe("OpenAIPassthroughService", () => {
     expect(await response.json()).toEqual({ ok: true });
   });
 
-  it("aborts the upstream request when the timeout elapses", async () => {
+  it("returns 502 when the upstream request times out", async () => {
     const fetcher: typeof fetch = async (_input, init) =>
       new Promise((_, reject) => {
         const signal = init?.signal;
@@ -82,19 +82,19 @@ describe("OpenAIPassthroughService", () => {
       },
     });
 
-    const outcome = await Promise.race([
-      service
-        .handleCompletion(originalRequest, { model: "gpt-4" })
-        .then(
-          () => "resolved",
-          () => "rejected"
-        ),
-      new Promise<string>((resolve) => {
-        setTimeout(() => resolve("timeout"), 100);
-      }),
-    ]);
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+    });
 
-    expect(outcome).toBe("rejected");
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Unable to connect to upstream service",
+        type: "api_error",
+        param: null,
+        code: "bad_gateway",
+      },
+    });
   });
 
   it("overrides Authorization header when server API key is configured", async () => {
@@ -233,6 +233,149 @@ describe("OpenAIPassthroughService", () => {
         type: "api_error",
         param: null,
         code: "invalid_response",
+      },
+    });
+  });
+
+  it("passes through upstream error responses verbatim", async () => {
+    const fetcher: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            message: "Incorrect API key provided: sk-***",
+            type: "invalid_request_error",
+            param: null,
+            code: "invalid_api_key",
+          },
+        }),
+        {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Incorrect API key provided: sk-***",
+        type: "invalid_request_error",
+        param: null,
+        code: "invalid_api_key",
+      },
+    });
+  });
+
+  it("returns 502 when upstream response JSON is invalid", async () => {
+    const fetcher: typeof fetch = async () =>
+      new Response("{", {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+    });
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Invalid response format from upstream service",
+        type: "api_error",
+        param: null,
+        code: "invalid_response",
+      },
+    });
+  });
+
+  it("returns 502 when upstream connection fails", async () => {
+    const fetcher: typeof fetch = async () => {
+      throw new TypeError("fetch failed");
+    };
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+    });
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: {
+        message: "Unable to connect to upstream service",
+        type: "api_error",
+        param: null,
+        code: "bad_gateway",
+      },
+    });
+  });
+
+  it("returns 500 when an unexpected error occurs", async () => {
+    const fetcher: typeof fetch = async () => {
+      throw new Error("boom");
+    };
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    const response = await service.handleCompletion(originalRequest, {
+      model: "gpt-4",
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: {
+        message:
+          "Internal router error occurred while processing upstream request",
+        type: "api_error",
+        param: null,
+        code: "router_internal_error",
       },
     });
   });
