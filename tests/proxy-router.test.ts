@@ -4,6 +4,7 @@ import type { ModelCatalog } from "../src/config/model-settings-service";
 import { DEFAULT_FIXED_MODEL_IDS } from "../src/config/model-settings-service";
 import { createProxyApp, startProxyServer } from "../src/proxy/proxy-router";
 import type { ModelRoutingService } from "../src/proxy/model-routing-service";
+import type { OpenAIPassthroughService } from "../src/proxy/openai-passthrough-service";
 
 type TransformService = {
   handleCompletion: (
@@ -31,6 +32,19 @@ function createTransformServiceStub(
       ok: true,
       value: { ok: true },
     }),
+    ...overrides,
+  };
+}
+
+function createOpenAIServiceStub(
+  overrides: Partial<OpenAIPassthroughService> = {}
+): OpenAIPassthroughService {
+  return {
+    handleCompletion: async () =>
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
     ...overrides,
   };
 }
@@ -183,6 +197,191 @@ describe("Proxy router", () => {
     const payload = await response.json();
     expect(payload.error.type).toBe("invalid_request_error");
     expect(payload.error.code).toBe("invalid_request");
+  });
+
+  it("returns 400 when model is missing", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ messages: [] }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        message: "Missing required parameter: 'model'",
+        type: "invalid_request_error",
+        param: "model",
+        code: null,
+      },
+    });
+  });
+
+  it("returns 400 when model is null", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: null, messages: [] }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        message: "Missing required parameter: 'model'",
+        type: "invalid_request_error",
+        param: "model",
+        code: null,
+      },
+    });
+  });
+
+  it("returns 400 when model is empty", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "", messages: [] }),
+    });
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        message: "Missing required parameter: 'model'",
+        type: "invalid_request_error",
+        param: "model",
+        code: null,
+      },
+    });
+  });
+
+  it("routes non-Antigravity models to OpenAI passthrough", async () => {
+    let openaiBody: Record<string, unknown> | null = null;
+    let transformCalled = false;
+    const openaiService = createOpenAIServiceStub({
+      handleCompletion: async (_request, body) => {
+        openaiBody = body;
+        return new Response(JSON.stringify({ id: "openai-1" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    const app = createProxyApp({
+      transformService: createTransformServiceStub({
+        handleCompletion: async () => {
+          transformCalled = true;
+          return { ok: true, value: { id: "antigravity-1" } };
+        },
+      }),
+      openaiService,
+    });
+    const payload = {
+      model: "gpt-4o",
+      response_format: { type: "json_schema" },
+      messages: [
+        {
+          role: "user",
+          content: [{ type: "text", text: "Hello." }],
+        },
+      ],
+    };
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "openai-1" });
+    expect(transformCalled).toBe(false);
+    expect(openaiBody).toEqual(payload);
+  });
+
+  it("routes based on model after alias resolution", async () => {
+    let openaiBody: Record<string, unknown> | null = null;
+    let transformCalled = false;
+    const modelRoutingService: ModelRoutingService = {
+      route: (request) => ({
+        request: { ...request, model: "gpt-4-turbo" },
+        routed: true,
+        detectedAlias: "@gpt4",
+        originalModel: request.model,
+      }),
+    };
+    const openaiService = createOpenAIServiceStub({
+      handleCompletion: async (_request, body) => {
+        openaiBody = body;
+        return new Response(JSON.stringify({ id: "openai-2" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+    const app = createProxyApp({
+      transformService: createTransformServiceStub({
+        handleCompletion: async () => {
+          transformCalled = true;
+          return { ok: true, value: { id: "antigravity-2" } };
+        },
+      }),
+      modelRoutingService,
+      openaiService,
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gemini-3-flash",
+        messages: [{ role: "user", content: "@gpt4 hello" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ id: "openai-2" });
+    expect(transformCalled).toBe(false);
+    expect(openaiBody).toMatchObject({ model: "gpt-4-turbo" });
+  });
+
+  it("returns 500 when OpenAI passthrough service is missing", async () => {
+    const app = createProxyApp({
+      transformService: createTransformServiceStub(),
+    });
+
+    const response = await app.request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello." }],
+      }),
+    });
+
+    expect(response.status).toBe(500);
+    const payload = await response.json();
+    expect(payload).toEqual({
+      error: {
+        message: "OpenAI passthrough service is not configured.",
+        type: "api_error",
+        param: null,
+        code: "router_internal_error",
+      },
+    });
   });
 
   it("delegates to TransformService with validated request when routing is not configured", async () => {
