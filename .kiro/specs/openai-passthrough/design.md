@@ -207,18 +207,25 @@ flowchart TD
     B -->|Yes - Use Service Key| D2[Forward with Service Key]
     D --> E{fetch() succeeds?}
     D2 --> E
-    E -->|No - Network Error/Timeout| F[504 router_network_timeout]
-    E -->|No - Unexpected Exception| F2[500 router_internal_error]
-    E -->|Yes - HTTP Response Received| G[Passthrough Response Verbatim]
-    G --> H{Streaming?}
-    H -->|No| I[Return JSON Response as-is]
-    H -->|Yes| J[Start Stream Relay]
-    J --> K{Stream Error After Start?}
-    K -->|Connection Lost| L[Client Receives Partial Stream - No Router Intervention]
-    K -->|No Error| M[Complete Stream Relay]
+    E -->|No - Network Error/Timeout| F[502 bad_gateway - Req 4.2]
+    E -->|No - Unexpected Exception| F2[500 router_internal_error - Req 4.4]
+    E -->|Yes - HTTP Response Received| G{Response Body Valid?}
+    G -->|No - Parse Failed| H[502 invalid_response - Req 4.3]
+    G -->|Yes| I[Passthrough Response Verbatim - Req 4.1]
+    I --> J{Streaming?}
+    J -->|No| K[Return JSON Response as-is]
+    J -->|Yes| L[Start Stream Relay]
+    L --> M{Stream Error After Start?}
+    M -->|Connection Lost| N[Client Receives Partial Stream - No Router Intervention]
+    M -->|No Error| O[Complete Stream Relay]
 ```
 
-> **重要**: 上流から HTTP レスポンス（ステータス + ボディ）が返却された場合は、ステータスコードやボディの内容にかかわらず、そのまま透過的にクライアントに返却する。ルーターが独自のエラーを生成するのは、`fetch()` が例外をスローした場合（ネットワークエラー、タイムアウト）のみ。
+> **重要**:
+> - **透過パススルー（Req 4.1）**: 上流から HTTP レスポンス（ステータス + ボディ）が返却され、ボディが正常にパース可能な場合は、ステータスコードやボディの内容にかかわらず、そのまま透過的にクライアントに返却する。
+> - **ルーター側エラー生成**: 以下の場合のみルーターが独自のエラーを生成する：
+>   - Req 4.2: ネットワークエラー、接続タイムアウト（HTTP レスポンス不在）
+>   - Req 4.3: HTTP レスポンスは受信したが、ボディが不正またはパース不可能
+>   - Req 4.4: `fetch()` が予期しない例外をスロー（ルーター内部エラー）
 
 
 
@@ -287,7 +294,9 @@ flowchart TD
 interface OpenAIPassthroughService {
   handleCompletion(
     originalRequest: Request,
-    body: Record<string, unknown>  // OpenAI パススルーでは未変換の生のペイロードを受け取る
+    body: Record<string, unknown>  // モデルエイリアス解決後のリクエストボディ
+                                    // - model フィールドはエイリアス解決済み（例: @gpt4 → gpt-4-turbo）
+                                    // - その他のフィールドは元の形式を保持（透過）
   ): Promise<Response>;
 }
 
@@ -311,6 +320,31 @@ function createOpenAIPassthroughService(
   - API キーは `configService.getApiKey()` から取得（未設定時はクライアントヘッダーを使用）
 
 ##### Implementation Notes
+
+###### Router との契約
+
+OpenAIPassthroughService は、Router（proxy-router）との以下の契約に基づいて動作します：
+
+| 契約項目 | Router の責務 | OpenAIPassthroughService の前提 | 違反時の影響 |
+|---------|---------------|--------------------------------|-------------|
+| JSON パース | リクエストボディを JSON としてパース済み | `body` パラメータは有効な JavaScript オブジェクト | 違反不可（Router がエラーを返すため、このサービスに到達しない） |
+| `model` フィールド検証 | `model` フィールドの存在を検証済み（Req 2.3） | `body.model` は必ず存在し、空文字列ではない | 違反不可（Router が 400 エラーを返すため） |
+| モデルエイリアス解決 | ModelRoutingService によるエイリアス解決を適用済み | `body.model` はエイリアス解決後の値（例: `@gpt4` → `gpt-4-turbo`） | エイリアスが未解決の場合、上流サーバーがエラーを返す可能性がある |
+| その他フィールドの透過 | OpenAI パス用の最小限バリデーション（`.passthrough()` 使用） | `content` 配列などは変換されず、元の形式を保持 | Antigravity パス用スキーマ（`ChatCompletionRequestSchema`）が誤って適用された場合、予期しない変換が発生 |
+| Content-Type 検証 | `application/json` 以外は 400 エラーを返す | このサービスに到達するリクエストは `application/json` | 違反不可（Router がエラーを返すため） |
+
+**重要な設計判断**:
+- モデルエイリアス解決（`model` フィールドの変換）は、透過性要件（Req 3.1）の**例外**として許容される。
+- これにより、Antigravity ルートと OpenAI Passthrough ルートの両方で一貫したエイリアス体験を提供できる。
+- その他のフィールド（`messages`, `temperature` など）は一切変換されない。
+
+**アサーション（実装時に追加推奨）**:
+```typescript
+// OpenAIPassthroughService.handleCompletion() 内
+if (!body.model || typeof body.model !== 'string') {
+  throw new Error('Contract violation: body.model must be a non-empty string');
+}
+```
 
 - **Preconditions (Router Context)**:
   - OpenAI パスの場合、`proxy-router` により、リクエストは `OpenAIPassthroughRequestSchema`（`.passthrough()` 使用）で最小限のバリデーション済み。
@@ -336,8 +370,9 @@ function createOpenAIPassthroughService(
       - その他のヘッダー: 元リクエストからコピー
       - `Authorization`: 上記ロジックに従って設定
     - **Body**:
-      - Router でパース済みの生の `body`（`Record<string, unknown>`）を `JSON.stringify(body)` で再シリアライズして送信。
-      - **重要**: `OpenAIPassthroughRequestSchema` は `.passthrough()` を使用しているため、未知のフィールドは保持される。
+      - Router から受け取った `body`（`Record<string, unknown>`）を `JSON.stringify(body)` で再シリアライズして送信。
+      - **重要**: `body` には既にモデルエイリアス解決が適用されている（`model` フィールドのみ変換済み）。
+      - その他のフィールドは `OpenAIPassthroughRequestSchema` の `.passthrough()` により未変換のまま保持される。
       - これにより、OpenAI API の新しいパラメータや拡張フィールドも透過的に転送される。
     - **Response**:
       - `fetch` の戻り値 `Response` オブジェクトを、新しい `Response` オブジェクトとしてラップして返却する。
@@ -595,6 +630,12 @@ const routedRequest = routingResult?.request ?? parsed.data;
 
 if (shouldRouteToOpenAI(routedRequest.model)) {
   // 上位サーバールート (OpenAI Passthrough)
+  //
+  // **重要**: routedRequest には既にモデルエイリアス解決が適用されている
+  // - 例: クライアントが "@gpt4" を送信 → routedRequest.model = "gpt-4-turbo"
+  // - これは透過性要件（Req 3.1）の例外として許容される
+  // - その他のフィールド（messages, temperature など）は変換されない
+  //
   // OpenAIConfigService.isConfigured() に基づき、以下のいずれかのモードで動作:
   // - Server Auth モード: サーバー側の OPENAI_API_KEY を使用
   // - Auth Passthrough モード: クライアントの Authorization ヘッダーを転送
@@ -693,22 +734,24 @@ OpenAI パススルーのエラー処理は以下の方針に従う:
 | Error Scenario | HTTP Status | Error Code | Message | Streaming Behavior |
 |----------------|-------------|------------|---------|-------------------|
 | model フィールド欠損 (Req 2.3) | 400 | `null` | Missing required parameter: 'model' | N/A (occurs before stream) |
-| ネットワークタイムアウト (Req 4.2) | 504 | `router_network_timeout` | Failed to connect to upstream API: network timeout | Only detectable before stream starts |
-| 内部エラー (Req 4.3) | 500 | `router_internal_error` | Internal router error occurred while processing upstream request | Only detectable before stream starts |
+| 上流サービスへの接続失敗 (Req 4.2) | 502 | `bad_gateway` | Unable to connect to upstream service | Only detectable before stream starts |
+| 上流からの不正なレスポンスボディ (Req 4.3) | 502 | `invalid_response` | Invalid response format from upstream service | Only detectable before stream starts |
+| 内部エラー (Req 4.4) | 500 | `router_internal_error` | Internal router error occurred while processing upstream request | Only detectable before stream starts |
 
-#### Req 4.4: 上流レスポンス不正の処理（透過性との両立）
+#### エラーハンドリングの詳細（透過性との両立）
 
-**設計判断**: OpenAI パススルーの透過性を優先し、Req 4.4 の適用範囲を限定する。
+**設計判断**: OpenAI パススルーの透過性を優先し、ルーター側でのエラー生成を最小限にする。
 
-| シナリオ | 処理 | 理由 |
-|---------|------|------|
-| 上流が HTTP レスポンスを返却（ステータス + ボディ） | **そのまま透過** | 透過性優先。エラーかどうかの判断はクライアントに委譲 |
-| ネットワークエラー（接続不可、タイムアウト） | 504 `router_network_timeout` | 上流から応答がないため、ルーターが生成 |
-| `fetch` が例外をスロー（予期しないエラー） | 500 `router_internal_error` | ルーター内部エラーとして処理 |
+| シナリオ | 処理 | Requirements |
+|---------|------|--------------|
+| 上流が HTTP レスポンスを返却（ステータス + ボディ） | **そのまま透過** | Req 4.1 - 透過性優先。エラーかどうかの判断はクライアントに委譲 |
+| ネットワークエラー（接続不可、タイムアウト） | 502 `bad_gateway` | Req 4.2 - 上流から応答がないため、ルーターが生成 |
+| レスポンスボディのパース失敗 | 502 `invalid_response` | Req 4.3 - HTTPレスポンスは受信したが、ボディが不正 |
+| `fetch` が予期しない例外をスロー | 500 `router_internal_error` | Req 4.4 - ルーター内部エラーとして処理 |
 
-**Req 4.4 の再解釈**:
-- 「上流からの不完全な応答」は、**上流が HTTP レスポンスを返却しない場合**（ネットワークエラー、接続タイムアウト）にのみ適用
+**実装方針**:
 - 上流が HTTP ステータスとボディを返却した場合は、ボディの内容にかかわらず透過的に返却
+- ネットワーク層のエラー（Req 4.2）とアプリケーション層のエラー（Req 4.3）を明確に区別
 - これにより、OpenAI API の新しいレスポンス形式にも対応可能
 
 ```typescript
@@ -716,18 +759,35 @@ OpenAI パススルーのエラー処理は以下の方針に従う:
 async function handleCompletion(originalRequest: Request, body: Record<string, unknown>): Promise<Response> {
   try {
     const response = await fetch(upstreamUrl, { ... });
-    // 上流からのレスポンスはステータスにかかわらず透過的に返却
+    // ← Req 4.2: ここで例外 → ネットワークエラー、接続失敗
+
+    // 上流からのレスポンスはステータスにかかわらず透過的に返却 (Req 4.1)
+    // ただし、レスポンスボディのパースが必要な場合は Req 4.3 が適用される可能性あり
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
       headers: response.headers,
     });
+    // ← Req 4.3: ストリーミング以外でボディパース失敗時に適用
+
   } catch (error) {
     // fetch が例外をスローした場合のみルーターがエラーを生成
+
+    // Req 4.2: ネットワークエラー、接続失敗
     if (error instanceof TypeError && error.message.includes('fetch')) {
-      return createErrorResponse(504, 'router_network_timeout', ...);
+      return createErrorResponse(502, 'bad_gateway',
+        'Unable to connect to upstream service');
     }
-    return createErrorResponse(500, 'router_internal_error', ...);
+
+    // Req 4.3: レスポンスボディのパース失敗（JSONパースエラーなど）
+    if (error instanceof SyntaxError) {
+      return createErrorResponse(502, 'invalid_response',
+        'Invalid response format from upstream service');
+    }
+
+    // Req 4.4: その他の予期しない例外
+    return createErrorResponse(500, 'router_internal_error',
+      'Internal router error occurred while processing upstream request');
   }
 }
 ```

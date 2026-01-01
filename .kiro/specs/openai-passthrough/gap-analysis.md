@@ -43,10 +43,101 @@
 - **欠点**: 共通化しすぎると双方の要件差異が埋もれる。
 
 ## 5. Implementation Complexity & Risk
-- **Effort**: **M**  
-  - ルーター分岐、パススルー実装、ヘッダー制御、エラーフォーマット、ストリーミング透過で工数増。
-- **Risk**: **Medium**  
-  - 既存の Zod 検証ロジックがパススルー要件と衝突する可能性があり、ルーター改修の影響範囲が広い。
+
+### 5.1 Effort Estimation Criteria
+
+| Size | Person-Days | Story Points | Description |
+|------|-------------|--------------|-------------|
+| **S** (Small) | 1-2 days | 1-3 points | 単一コンポーネントの追加または既存コンポーネントの小規模修正。テストケース 5 個以下。 |
+| **M** (Medium) | 3-5 days | 5-8 points | 複数コンポーネントの追加または既存フローの中規模修正。統合テストが必要。テストケース 10-20 個。 |
+| **L** (Large) | 6-10 days | 13-21 points | アーキテクチャ変更を伴う大規模実装。E2E テスト、パフォーマンステスト、セキュリティレビューが必要。テストケース 30 個以上。 |
+
+### 5.2 Risk Categories
+
+| Risk Level | Criteria | Mitigation Strategy |
+|------------|----------|---------------------|
+| **Low** | 既存コードへの影響が限定的。ロールバックが容易。 | 標準的な単体テスト + 統合テスト |
+| **Medium** | 既存フローの修正が必要。複数コンポーネント間の協調が必要。 | 回帰テスト + 段階的デプロイ + フィーチャーフラグ |
+| **High** | コアアーキテクチャの変更。広範囲の影響。複雑な状態管理。 | 包括的テスト + カナリアデプロイ + ロールバック計画 + セキュリティレビュー |
+
+### 5.3 Identified Risks
+
+#### 5.3.1 Design & Architecture Risks
+
+| Risk | Severity | Impact | Mitigation |
+|------|----------|--------|------------|
+| **スキーマ検証の分離** | Medium | `ChatCompletionRequestSchema` が OpenAI パススルーで未知フィールドを拒否する可能性 | 経路別スキーマ（`OpenAIPassthroughRequestSchema` with `.passthrough()`）の導入 |
+| **レスポンス透過ロジック** | Medium | 上流エラー（4xx/5xx）を正しく透過せず、ルーターが独自エラーを生成してしまうリスク | 明示的な透過条件（HTTP レスポンス受信時は verbatim 返却）をコード化 |
+| **ストリーミング処理** | High | ストリーム開始後のエラー検出・ロギングが困難。接続切断時の挙動が不明瞭。 | 透過中継を優先し、ストリーム開始後はクライアント側で処理（設計判断として明文化） |
+| **モデルエイリアス解決の一貫性** | Low | Antigravity と OpenAI で異なる動作になる可能性 | `ModelRoutingService` をルーティング判定前に適用（両経路で統一） |
+
+#### 5.3.2 Integration & Testing Risks
+
+| Risk | Severity | Impact | Mitigation |
+|------|----------|--------|------------|
+| **Router 改修の影響範囲** | Medium | 既存 Antigravity フローに予期しない副作用が発生する可能性 | 回帰テスト（既存テストスイートを全実行） + 分岐ロジックの明確な分離 |
+| **環境変数の管理** | Low | `OPENAI_API_KEY` 未設定時の動作が不明瞭 | Auth Passthrough モードを明示的にサポート + 設定検証ロジック |
+| **E2E テストの複雑さ** | Medium | 実際の OpenAI API との統合テストが必要だが、コストと安定性の課題 | モックサーバー（`Bun.serve`）を使用 + 環境変数 `RUN_E2E=1` でオプトイン |
+| **ヘッダー処理の互換性** | Low | クライアントヘッダーの保持・削除ロジックが正しく動作しない可能性 | 単体テスト（ヘッダー処理専用） + 統合テスト |
+
+#### 5.3.3 Security & Compliance Risks
+
+| Risk | Severity | Impact | Mitigation |
+|------|----------|--------|------------|
+| **API キーの露出** | High | `OPENAI_API_KEY` がログやレスポンスに露出する可能性 | ロギング時のマスキング + セキュリティレビュー |
+| **Auth Passthrough の脆弱性** | Medium | クライアントの `Authorization` ヘッダーを無制限に転送することによるセキュリティリスク | Server Auth モード（`OPENAI_API_KEY` 設定）を推奨 + ドキュメント化 |
+
+### 5.4 Option-by-Option Complexity & Risk Comparison
+
+#### Option A: 既存コンポーネントの拡張
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Effort** | **3-4 days** (M) | `TransformService` 内に条件分岐を追加。ヘッダー処理、エラーフォーマットを実装。 |
+| **Story Points** | **5-8 points** | 中規模実装。既存ロジックとの混在により複雑度が増加。 |
+| **Risk Level** | **High** | Antigravity 変換と OpenAI 透過が混在し、責務が不明瞭。既存テストの保守性が低下。 |
+| **Key Risks** | - 責務の混在<br>- エラー処理の複雑化<br>- テストケースの肥大化 | TransformService が「変換」と「透過」の両方を担当するため、コードの可読性と保守性が低下。 |
+| **Mitigation** | - 内部で明確な分岐を実装<br>- 既存テストへの影響を最小化 | 実装の複雑さとリスクから**非推奨**。 |
+
+#### Option B: 新規コンポーネントの作成（推奨）
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Effort** | **4-5 days** (M) | 新規 `OpenAIPassthroughService` + `OpenAIConfigService` を実装。Router 分岐ロジックを追加。 |
+| **Story Points** | **5-8 points** | 中規模実装。責務分離により既存コードへの影響が最小。 |
+| **Risk Level** | **Medium** | Router 改修の影響範囲が限定的。既存フローとの分離により回帰リスクが低い。 |
+| **Key Risks** | - Router 分岐ロジックの実装ミス<br>- 経路別スキーマの誤適用<br>- DI 配線の複雑化 | 分岐ロジックが正しく動作しない場合、意図しない経路に転送される可能性。 |
+| **Mitigation** | - ルーティング判定の単体テスト<br>- 回帰テスト（既存 Antigravity フロー）<br>- 統合テスト（両経路） | 責務分離とテスト容易性から**推奨**。 |
+| **Components** | - `OpenAIPassthroughService` (新規)<br>- `OpenAIConfigService` (新規)<br>- `shouldRouteToOpenAI` (新規)<br>- `proxy-router.ts` (拡張) | 各コンポーネントが明確な責務を持ち、テスト・保守が容易。 |
+
+#### Option C: ハイブリッド・アプローチ
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| **Effort** | **5-6 days** (M-L) | Option B の実装 + 共通ユーティリティ（ヘッダー処理、エラーフォーマット）の抽出と設計。 |
+| **Story Points** | **8-13 points** | 中〜大規模実装。共通化の設計と実装に追加工数が必要。 |
+| **Risk Level** | **Medium-High** | 共通化の範囲と境界を誤ると、Antigravity と OpenAI の要件差異が埋もれるリスク。 |
+| **Key Risks** | - 共通化による過剰な抽象化<br>- 要件差異の埋没<br>- テストケースの複雑化 | 共通ユーティリティの設計ミスにより、両経路に影響が波及する可能性。 |
+| **Mitigation** | - 共通化の範囲を最小限に限定<br>- 経路ごとの統合テスト<br>- 共通ユーティリティの単体テスト | 現時点では**過剰設計**。将来的に類似経路が増えた場合に再検討。 |
+
+### 5.5 Recommended Approach
+
+**推奨: Option B（新規コンポーネントの作成）**
+
+- **理由**:
+  - 責務分離が明確（Antigravity 変換 vs OpenAI 透過）
+  - 既存コードへの影響が最小（回帰リスク低）
+  - テスト容易性が高い（各コンポーネントを独立してテスト可能）
+  - 工数とリスクのバランスが良好（M サイズ、Medium リスク）
+
+- **実装順序**:
+  1. `OpenAIConfigService` の実装（環境変数管理）
+  2. `OpenAIPassthroughService` の実装（透過ロジック）
+  3. `shouldRouteToOpenAI` の実装（ルーティング判定）
+  4. `proxy-router.ts` の拡張（分岐ロジック）
+  5. 統合テスト（両経路）+ 回帰テスト（Antigravity）
+
+- **総工数見積もり**: **4-5 days** (5-8 story points)
 
 ## 6. Recommendations for Design Phase
 - **推奨アプローチ**: Option B（新規 `OpenAIPassthroughService`）を主軸に設計。

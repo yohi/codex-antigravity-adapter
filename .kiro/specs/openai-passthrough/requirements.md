@@ -40,7 +40,13 @@ Codex Antigravity Adapter を拡張し、Antigravity API 対応モデル以外�
 **Objective:** クライアントとして、OpenAI 互換のリクエストとレスポンスを変換せずに利用したい。
 
 #### 受入基準
-1. When 上位サーバー互換ルートへ転送する, the OpenAI Passthrough ルーター shall クライアントの JSON ボディをスキーマ変換ずにそのまま転送する。
+1. When 上位サーバー互換ルートへ転送する, the OpenAI Passthrough ルーター shall クライアントの JSON ボディをスキーマ変換せずにそのまま転送する。
+   - **バリデーション戦略**: 上位サーバー互換ルートでは、`model` フィールドの存在のみを検証し、その他のフィールド（`messages`, `temperature`, `stream` など）は検証や変換を行わない。
+   - **経路別の違い**:
+     - **Antigravity ルート**: 厳格なスキーマバリデーション（`messages[].content` の配列を文字列に変換など）
+     - **OpenAI Passthrough ルート**: 最小限のバリデーション（`model` フィールドのみ）
+   - **例外**: モデルエイリアス機能が有効な場合、`model` フィールドは解決後の値に変換される（例: `@gpt4` → `gpt-4-turbo`）。
+   - **Note**: モデルエイリアス解決は、Antigravity ルートと OpenAI Passthrough ルートの両方で一貫して適用される。これにより、ユーザーはどのルートでも同じエイリアスを使用できる。
 2. When 上位サーバー互換ルートへ転送する, the OpenAI Passthrough ルーター shall 以下のヘッダー処理を行う:
    - **`OPENAI_API_KEY` が設定されている場合**:
      - クライアント由来の `Authorization` ヘッダーは**無視**する（上書きする）。
@@ -84,20 +90,35 @@ Codex Antigravity Adapter を拡張し、Antigravity API 対応モデル以外�
    }
    ```
 
-2. **ネットワークエラー・タイムアウト**:
-   When 上位サーバーへの接続中にネットワークエラーまたはタイムアウトが発生する, the OpenAI Passthrough ルーター shall HTTP ステータス 504 (Gateway Timeout) とともに、以下の OpenAI 互換エラー応答を返す:
+2. **上流サービスへの接続失敗**:
+   When ネットワークエラーや接続タイムアウトによりHTTPレスポンス自体を受信できない, the OpenAI Passthrough ルーター shall HTTP ステータス 502 (Bad Gateway) とともに、以下の OpenAI 互換エラー応答を返す:
    ```json
    {
      "error": {
-       "message": "Failed to connect to upstream API: network timeout",
+       "message": "Unable to connect to upstream service",
        "type": "api_error",
        "param": null,
-       "code": "router_network_timeout"
+       "code": "bad_gateway"
      }
    }
    ```
+   Note: TCP接続エラー、DNS解決エラー、リクエストタイムアウト、上流サービスの応答なしなどが該当する。
 
-3. **予期しない例外・内部エラー**:
+3. **上流からの不正なレスポンスボディ**:
+   When HTTPレスポンスは受信したが、ボディが不正またはパース不可能である, the OpenAI Passthrough ルーター shall HTTP ステータス 502 (Bad Gateway) とともに、以下の OpenAI 互換エラー応答を返す:
+   ```json
+   {
+     "error": {
+       "message": "Invalid response format from upstream service",
+       "type": "api_error",
+       "param": null,
+       "code": "invalid_response"
+     }
+   }
+   ```
+   Note: JSONパースエラー、Content-Typeが application/json だが実際はHTML、不完全なJSONレスポンスなどが該当する。
+
+4. **予期しない例外・内部エラー**:
    When 上位サーバーからの応答処理中に予期しない例外が発生する, the OpenAI Passthrough ルーター shall HTTP ステータス 500 (Internal Server Error) とともに、以下の OpenAI 互換エラー応答を返す:
    ```json
    {
@@ -106,19 +127,6 @@ Codex Antigravity Adapter を拡張し、Antigravity API 対応モデル以外�
        "type": "api_error",
        "param": null,
        "code": "router_internal_error"
-     }
-   }
-   ```
-
-4. **上流からの不完全な応答**:
-   When 上位サーバーからステータスコードは受信したが本文が不正またはパース不可能である, the OpenAI Passthrough ルーター shall 受信したステータスコードとともに、以下の正規化された OpenAI 互換エラー応答を返す:
-   ```json
-   {
-     "error": {
-       "message": "Upstream server returned an invalid or unparseable response",
-       "type": "api_error",
-       "param": null,
-       "code": "router_upstream_response_invalid"
      }
    }
    ```
