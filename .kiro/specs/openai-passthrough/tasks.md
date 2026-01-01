@@ -12,8 +12,8 @@ OpenAI Passthrough ルーターは、モデル名に基づいて Antigravity ま
 
 ## タスク
 
-- [ ] 1. 環境設定管理機能の構築
-- [ ] 1.1 OpenAI 環境変数の読み込みと提供機能を実装
+- [x] 1. 環境設定管理機能の構築
+- [x] 1.1 OpenAI 環境変数の読み込みと提供機能を実装
   - API キーの読み込みと提供機能を実装
   - 接続先 URL の読み込みと提供機能を実装(デフォルト値: `https://api.openai.com`)
   - 設定状態の判定機能を提供(Server Auth モードまたは Auth Passthrough モード)
