@@ -115,16 +115,18 @@ sequenceDiagram
         TS-->>R: Result
     else other models (gpt, etc.)
         SL-->>R: true
-        alt openaiService is available
-            R->>OS: handleCompletion(rawRequest, routedRequest)
-            OS->>OA: Passthrough Request
+        R->>OS: handleCompletion(rawRequest, routedRequest)
+        Note over OS: Auth Mode determined by OPENAI_API_KEY<br/>- Set: Use service key<br/>- Unset: Auth Passthrough (use client Authorization header)
+        OS->>OA: Passthrough Request (with appropriate auth)
+        alt Upstream OpenAI returns error (e.g., 401, 400, 500)
+            OA-->>OS: Error Response
+            OS-->>R: Passthrough Error Verbatim
+        else Success
             OA-->>OS: Response/Stream
             OS-->>R: Response
-        else openaiService missing/no key
-            R-->>Client: 401 router_api_key_missing (Req 1.2)
         end
     end
-    
+
     R-->>Client: Response
 ```
 
@@ -139,12 +141,12 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[Request Received] --> B{OPENAI_API_KEY set?}
-    B -->|No| C[401 router_api_key_missing]
-    B -->|Yes| D[Forward to OpenAI]
+    B -->|No - Auth Passthrough Mode| D[Forward with Client Authorization Header]
+    B -->|Yes - Use Service Key| D[Forward to OpenAI]
     D --> E{Network Error?}
     E -->|Yes| F[504 router_network_timeout]
     E -->|No| G{OpenAI Response?}
-    G -->|Error Response| H[Passthrough Error Verbatim]
+    G -->|Error Response including 401| H[Passthrough Error Verbatim]
     G -->|Success| I{Streaming?}
     I -->|No| J[Passthrough Response]
     I -->|Yes| K[Start Stream Relay]
@@ -200,9 +202,10 @@ flowchart TD
 
 - 上位サーバー（`OPENAI_BASE_URL` または `https://api.openai.com`）への HTTP リクエスト送信
 - リクエストボディのスキーマ変換を行わない
-- **認証ヘッダーの処理**:
-  - `OPENAI_API_KEY` が設定されている場合: クライアントの `Authorization` ヘッダーを無視し、サーバー側の API キーを使用
-  - `OPENAI_API_KEY` が未設定の場合（Auth Passthrough モード）: クライアントの `Authorization` ヘッダーをそのまま転送
+- **認証ヘッダーの処理** (Requirement 1.2, 1.5, 3.2):
+  - **Server Auth モード** (`OPENAI_API_KEY` が設定されている場合): クライアントの `Authorization` ヘッダーを無視し、サーバー側の API キーを使用
+  - **Auth Passthrough モード** (`OPENAI_API_KEY` が未設定の場合): クライアントの `Authorization` ヘッダーをそのまま転送
+  - 認証エラー（401）は上流サーバーからの応答として透過的に返却され、このサービス自体は認証エラーを生成しない
 - ストリーミング応答の透過中継
 - 上流エラーの忠実な伝達
 
@@ -297,8 +300,9 @@ function createOpenAIPassthroughService(
 
 - `OPENAI_API_KEY` 環境変数の読み込み
 - `OPENAI_BASE_URL` 環境変数の読み込み（デフォルト: `https://api.openai.com`）
-- API キーの存在チェック
+- API キーの存在チェック（認証モード判定のため）
 - キーをクライアントに露出しない
+- **重要**: `isConfigured()` が `false` を返してもエラーではなく、Auth Passthrough モードで動作することを意味する
 
 ##### Dependencies
 
@@ -321,7 +325,7 @@ function createOpenAIConfigService(): OpenAIConfigService;
 - **Postconditions**:
   - `getApiKey()`: 環境変数から読み取った値を返却（未設定なら `undefined`）
   - `getBaseUrl()`: `OPENAI_BASE_URL` の値、または未設定時は `"https://api.openai.com"`
-  - `isConfigured()`: `OPENAI_API_KEY` が設定されている場合 `true`
+  - `isConfigured()`: `OPENAI_API_KEY` が設定されている場合 `true`（Server Auth モード）、未設定の場合 `false`（Auth Passthrough モード）
 - **Invariants**: 環境変数はプロセス起動時から変更されない前提
 
 ---
@@ -480,9 +484,11 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
    - `main.ts` の `createAppContext` がすべてのサービスの初期化と依存関係の構築を担当
    - 既存パターン（例: `ModelRoutingService` への `ModelAliasConfigService` 注入）との一貫性を維持
 
-4. **Runtime Configuration Check**:
-   - 環境変数未設定は起動時エラーではなく、ランタイムで 401 エラーとして処理
-   - Router は `openaiService.isConfigured()` で設定状態をチェックし、未設定時は 401 を返却
+4. **Runtime Authentication Mode**:
+   - `OPENAI_API_KEY` が設定されている場合、サーバー側のキーを使用（Server Auth モード）
+   - `OPENAI_API_KEY` が未設定の場合、クライアントの `Authorization` ヘッダーを転送（Auth Passthrough モード）
+   - `OpenAIConfigService.isConfigured()` は認証モードの判定に使用され、未設定=エラーではなく、未設定=Passthrough モード
+   - Router は認証エラーを返さず、OpenAIPassthroughService が適切なヘッダーを設定して上流サーバーに転送
 
 5. **Testing Seam**:
    - `CreateAppContextOptions` を通じたファクトリー注入により、テスト時にモックサービスを注入可能
@@ -519,8 +525,10 @@ const routedRequest = routingResult?.request ?? parsed.data;
 
 if (shouldRouteToOpenAI(routedRequest.model)) {
   // 上位サーバールート (OpenAI Passthrough)
-  // Auth Passthrough の処理は openaiService 内部で完結しているため、
-  // ここでの追加チェックは不要。
+  // OpenAIConfigService.isConfigured() に基づき、以下のいずれかのモードで動作:
+  // - Server Auth モード: サーバー側の OPENAI_API_KEY を使用
+  // - Auth Passthrough モード: クライアントの Authorization ヘッダーを転送
+  // 認証処理は openaiService 内部で完結し、Router は認証エラーを返さない
   return options.openaiService.handleCompletion(c.req.raw, routedRequest);
 }
 // Antigravity ルート
@@ -548,9 +556,10 @@ function shouldRouteToOpenAI(model: string): boolean {
 
 ##### Implementation Notes
 
-- **Integration**: 
+- **Integration**:
   - 既存の `ModelRoutingService` によるエイリアス解決後にルーティング判定
-  - `openaiService` が未導入の場合でも、モデル名が OpenAI 対象であれば 401 エラーを返し、誤ルーティングを防止
+  - `openaiService` は常に作成される（`createAppContext()` 参照）
+  - `OPENAI_API_KEY` が未設定の場合、Auth Passthrough モードで動作し、クライアントの Authorization ヘッダーを上流に転送する
 - **Validation**: 
   - **Requirement 2.3: strict model validation**:
     スキーマパースの直前または直後に以下の明示的なチェックを追加し、要件通りのエラーメッセージと `param` フィールドを保証する。
