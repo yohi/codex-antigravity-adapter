@@ -3,11 +3,14 @@ import { describe, expect, it } from "bun:test";
 import type { OpenAIConfigService } from "../../src/config/openai-config-service";
 import { createOpenAIPassthroughService } from "../../src/proxy/openai-passthrough-service";
 
-function createConfigService(baseUrl: string): OpenAIConfigService {
+function createConfigService(
+  baseUrl: string,
+  apiKey?: string
+): OpenAIConfigService {
   return {
-    getApiKey: () => undefined,
+    getApiKey: () => apiKey,
     getBaseUrl: () => baseUrl,
-    isConfigured: () => false,
+    isConfigured: () => Boolean(apiKey),
   };
 }
 
@@ -92,5 +95,73 @@ describe("OpenAIPassthroughService", () => {
     ]);
 
     expect(outcome).toBe("rejected");
+  });
+
+  it("overrides Authorization header when server API key is configured", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requests.push({ url, init });
+      return new Response(null, { status: 204 });
+    };
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test", "server-key"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-key",
+        "Content-Type": "application/json",
+        "Content-Length": "123",
+        Host: "localhost",
+        "X-Trace": "trace-id",
+      },
+    });
+
+    await service.handleCompletion(originalRequest, { model: "gpt-4" });
+
+    const headers = new Headers(requests[0].init?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer server-key");
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Trace")).toBe("trace-id");
+    expect(headers.has("Host")).toBe(false);
+    expect(headers.has("Content-Length")).toBe(false);
+  });
+
+  it("passes through Authorization header when server API key is not configured", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input.toString();
+      requests.push({ url, init });
+      return new Response(null, { status: 204 });
+    };
+
+    const service = createOpenAIPassthroughService({
+      configService: createConfigService("https://example.test"),
+      fetch: fetcher,
+    });
+
+    const originalRequest = new Request("http://localhost/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer client-key",
+        "Content-Type": "application/json",
+        "Content-Length": "123",
+        Host: "localhost",
+        "X-Trace": "trace-id",
+      },
+    });
+
+    await service.handleCompletion(originalRequest, { model: "gpt-4" });
+
+    const headers = new Headers(requests[0].init?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer client-key");
+    expect(headers.get("Content-Type")).toBe("application/json");
+    expect(headers.get("X-Trace")).toBe("trace-id");
+    expect(headers.has("Host")).toBe(false);
+    expect(headers.has("Content-Length")).toBe(false);
   });
 });

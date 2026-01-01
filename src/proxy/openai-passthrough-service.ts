@@ -27,6 +27,12 @@ export function createOpenAIPassthroughService(
       const baseUrl = options.configService.getBaseUrl();
       const url = new URL(CHAT_COMPLETIONS_PATH, baseUrl).toString();
       const headers = new Headers(originalRequest.headers);
+      const apiKey = options.configService.getApiKey();
+      headers.delete("Host");
+      headers.delete("Content-Length");
+      if (apiKey) {
+        headers.set("Authorization", `Bearer ${apiKey}`);
+      }
       const controller = new AbortController();
       const timeoutId = setTimeout(() => {
         controller.abort(new Error("Upstream request timed out"));

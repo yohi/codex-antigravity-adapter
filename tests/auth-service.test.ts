@@ -44,6 +44,20 @@ function createTokenStoreStub() {
   return { store, saved };
 }
 
+function withUnsetStateSecret<T>(fn: () => T): T {
+  const previous = process.env.ANTIGRAVITY_STATE_SECRET;
+  delete process.env.ANTIGRAVITY_STATE_SECRET;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.ANTIGRAVITY_STATE_SECRET;
+    } else {
+      process.env.ANTIGRAVITY_STATE_SECRET = previous;
+    }
+  }
+}
+
 describe("InMemoryAuthSessionStore", () => {
   it("expires sessions after the TTL window", () => {
     let now = 1_000;
@@ -238,20 +252,26 @@ describe("OAuthAuthService", () => {
     };
 
     try {
-      const service = new OAuthAuthService({
-        tokenStore,
-        sessionStore,
-        // No stateSecret provided
+      withUnsetStateSecret(() => {
+        const service = new OAuthAuthService({
+          tokenStore,
+          sessionStore,
+          // No stateSecret provided
+        });
+
+        // Should have warned about missing secret
+        expect(warnings.length).toBe(1);
+        expect(warnings[0]).toContain(
+          "WARNING: No persistent ANTIGRAVITY_STATE_SECRET is set"
+        );
+        expect(warnings[0]).toContain(
+          "will invalidate all existing OAuth states across restarts"
+        );
+
+        // Should still be able to generate auth URLs
+        const result = service.generateAuthUrl();
+        expect(result.ok).toBe(true);
       });
-
-      // Should have warned about missing secret
-      expect(warnings.length).toBe(1);
-      expect(warnings[0]).toContain("WARNING: No persistent ANTIGRAVITY_STATE_SECRET is set");
-      expect(warnings[0]).toContain("will invalidate all existing OAuth states across restarts");
-
-      // Should still be able to generate auth URLs
-      const result = service.generateAuthUrl();
-      expect(result.ok).toBe(true);
     } finally {
       console.warn = originalWarn;
     }
@@ -261,14 +281,16 @@ describe("OAuthAuthService", () => {
     const { store: tokenStore } = createTokenStoreStub();
     const sessionStore = new InMemoryAuthSessionStore();
 
-    expect(() => {
-      new OAuthAuthService({
-        tokenStore,
-        sessionStore,
-        requireStateSecret: true,
-        // No stateSecret provided
-      });
-    }).toThrow("ANTIGRAVITY_STATE_SECRET is required but not provided");
+    withUnsetStateSecret(() => {
+      expect(() => {
+        new OAuthAuthService({
+          tokenStore,
+          sessionStore,
+          requireStateSecret: true,
+          // No stateSecret provided
+        });
+      }).toThrow("ANTIGRAVITY_STATE_SECRET is required but not provided");
+    });
   });
 
   it("accepts empty string as missing secret", () => {
