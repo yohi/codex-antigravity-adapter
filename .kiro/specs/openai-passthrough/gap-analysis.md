@@ -1,99 +1,57 @@
-# ギャップ分析: OpenAI Passthrough 機能
+# Gap Analysis: OpenAI Passthrough
 
-## 1. 分析サマリー
+## 1. Analysis Summary
+- **概要**: 既存の Antigravity 変換フローに加えて、OpenAI 互換エンドポイントへの透過パススルー経路を追加する必要がある。
+- **主要課題**: `proxy-router.ts` のスキーマ検証が厳格で、OpenAI パススルー要求（未知フィールド含む）を拒否する可能性が高い。
+- **主要課題**: `model` 欠落時のエラー形式が要件の OpenAI 互換形式と一致しない。
+- **主要課題**: `OPENAI_API_KEY`/`OPENAI_BASE_URL` の設定・ヘッダー制御・透過転送の実装が存在しない。
+- **推奨**: ルーター分岐＋新規パススルーサービス（Option B）を中心に設計し、既存の TransformService とは分離する。
 
-OpenAI 本家 API へのパススルー機能を実装するためのギャップ分析を実施しました。
+## 2. Current State Investigation
+- **コード構造**: `src/proxy/proxy-router.ts` が `/v1/chat/completions` を受け、`ChatCompletionRequestSchema` で検証後 `TransformService` に固定で委譲している。
+- **再利用可能コンポーネント**:
+  - `src/proxy/transform-service.ts`: Antigravity 向け変換・送信・レスポンス変換に特化。
+  - `src/proxy/model-routing-service.ts`: メッセージ内エイリアスによるモデル置換に限定。
+  - `src/main.ts`: DI とアプリ合成の起点として拡張可能。
+- **規約確認**: Hono + Bun + TypeScript、`fetch` を標準 API として使用。サービスは factory で注入する構成。
 
-- **スコープ**: `model` 名に基づくリクエストの振り分け（Antigravity vs 上位サーバー）、および上位サーバーへのリクエスト透過中継の実装。これには `OPENAI_BASE_URL` 対応と Auth Passthrough モードが含まれる。
-- **特定された課題**:
-  - `ModelRoutingService` の役割は現在「同一プロバイダー内でのモデル置換」であり、プロバイダー自体の切り替えは考慮されていない。
-  - `ModelCatalog` が Antigravity 向けモデルしか返さない（OpenAI モデルが一覧に含まれない可能性）。- フォローアップタスク。
-  - **New**: `OPENAI_API_KEY` 未設定時のヘッダー制御ロジック（Auth Passthrough）を `OpenAIPassthroughService` に実装する必要がある。
-  - **New**: `OPENAI_BASE_URL` に対応した接続先変更ロジックが必要。
-- **推奨アプローチ**: **Router レベルでの分岐（Option B）**。
-  - `proxy-router.ts` で分岐ロジックを追加し、既存の `TransformService` と新設する `OpenAIPassthroughService` を切り替える構成が最もクリーンで安全です。
+## 3. Requirement-to-Asset Map
 
-## 2. 現状調査 (Current State)
+| 要件 | 既存資産 | ギャップ |
+| --- | --- | --- |
+| Req1: 環境設定と認証キー | `Bun.env` 参照の実装は散在するが OpenAI 用設定は無し | `OPENAI_API_KEY`/`OPENAI_BASE_URL` の統一管理が欠如 |
+| Req2: モデル名ルーティング | `model-routing-service.ts` はエイリアスのみ | `gemini/claude` 判定で Antigravity / その他 OpenAI の分岐が未実装 |
+| Req3: パススルー忠実性 | N/A | クライアントボディとストリームをそのまま中継するロジックが未実装 |
+| Req4: エラー処理 | `resolveProxyErrorMapping` 等 | OpenAI 標準エラーへのマッピングとパススルー時の verbatim 中継が未実装 |
+| Req5: 透過性 | `proxy-router.ts` | 既存エンドポイント上での動的分岐処理が必要 |
 
-### 主要コンポーネント
-- **src/proxy/proxy-router.ts**: エントリーポイント。リクエスト受信、バリデーション、変換、応答を行う。`Authorization` ヘッダーを含む生リクエスト (`c.req.raw`) にアクセス可能であり、パススルー実装に適している。
-- **src/proxy/model-routing-service.ts**: リクエスト内容（エイリアス）を見て `model` フィールドを書き換える。
-- **src/proxy/transform-service.ts**: Antigravity へのプロトコル変換とリクエスト送信を行う。
-- **src/config/model-settings-service.ts**: 利用可能なモデルの一覧（`ModelCatalog`）を提供する。
+## 4. Implementation Approach Options
 
-### 依存関係とパターン
-- **DI パターン**: 各サービスはファクトリー関数 (`create...Service`) で生成され、オプションで注入される。
-- **Hono**: HTTP サーバーとして使用。`c.req.raw` から `Authorization` ヘッダーを取得可能。
+### Option A: 既存コンポーネントの拡張
+- `TransformService` に OpenAI パススルー処理を追加し、内部で条件分岐。
+- **利点**: 呼び出し側の変更が少ない。
+- **欠点**: Antigravity 変換と OpenAI 透過が混在し責務が崩れる。エラー処理の分離が難しい。
 
-## 3. 要件とのギャップ分析
+### Option B: 新規コンポーネントの作成（推奨）
+- `OpenAIPassthroughService` を新設し、`proxy-router.ts` でモデル名に応じて分岐。
+- **利点**: 責務分離が明確。既存 Antigravity 変換に影響を最小化。
+- **欠点**: DI 配線と新規サービスの実装が必要。
 
-### Requirement 1: 環境設定と認証キー・接続先
-- **要件**: `OPENAI_API_KEY`, `OPENAI_BASE_URL` 環境変数のサポート。`OPENAI_API_KEY` 未設定時の Auth Passthrough。
-- **現状**: 現在は Google Cloud トークンのみ。環境変数管理は `Bun.env` で直接行われるか、個別の場所にある。
-- **ギャップ**: `OPENAI_API_KEY` と `OPENAI_BASE_URL` を読み込む `OpenAIConfigService` が必要。Base URL のデフォルト値 (`https://api.openai.com`) 管理が必要。
-- **判定**: **Missing**（新規追加が必要）
+### Option C: ハイブリッド・アプローチ
+- ルーティング判定は `proxy-router.ts`、共通ヘッダー整形やエラーフォーマットは `utils` として共有。
+- **利点**: 共有部の重複を削減。
+- **欠点**: 共通化しすぎると双方の要件差異が埋もれる。
 
-### Requirement 2: モデル名によるルーティング
-- **要件**: `model` 名に `gemini`/`claude` が含まれる場合は Antigravity、それ以外は上位サーバーへ。
-- **現状**: `proxy-router.ts` は無条件で `TransformService` を呼び出している。
-- **ギャップ**: `proxy-router.ts` レベルでの条件分岐ロジックが必要。
-- **判定**: **Constraint**（既存ロジックの変更が必要）
+## 5. Implementation Complexity & Risk
+- **Effort**: **M**  
+  - ルーター分岐、パススルー実装、ヘッダー制御、エラーフォーマット、ストリーミング透過で工数増。
+- **Risk**: **Medium**  
+  - 既存の Zod 検証ロジックがパススルー要件と衝突する可能性があり、ルーター改修の影響範囲が広い。
 
-### Requirement 3: パススルーの忠実性 (Auth Passthrough 含む)
-- **要件**: スキーマ変換なし、ヘッダー保持（ただし Host/Content-Length 除外）、ストリーミング透過。認証ヘッダーは設定有無で切り替え。
-- **現状**: `TransformService` は強制的に Antigravity 形式へ変換する。
-- **ギャップ**:
-  - 変換を行わずに上位サーバーへフェッチする新しいサービス (`OpenAIPassthroughService`) が必要。
-  - クライアントリクエストの `Authorization` ヘッダーを conditionally に転送するロジックが必要。
-  - レスポンスをそのまま返す (`return new Response(...)`) 処理が必要。
-- **判定**: **Missing**（新規コンポーネントが必要）
-
-### Requirement 4: エラー処理
-- **要件**: 上位サーバーからのエラーをそのまま返す。Router 独自エラーは OpenAI 互換形式。
-- **現状**: 既存のエラーハンドリングは Antigravity 用にラップされている。
-- **ギャップ**: 上位サーバーからのレスポンスをバイパスしてクライアントに返すパスが必要。Router 独自エラー（ネットワークタイムアウトなど）は `createOpenAIError` ヘルパーで生成する必要がある。
-- **判定**: **Constraint**（エラーハンドリングの共通化または分岐）
-
-### Requirement 5: 透過性と設定簡素化
-- **要件**: `/v1/chat/completions` 単一エンドポイント。
-- **現状**: エンドポイントは既に存在する。
-- **ギャップ**: 特になし。
-
-## 4. 実装アプローチの検討
-
-### Option A: TransformService の拡張
-- **判定**: 推奨しない（責務過多）。
-
-### Option B: Router レベルでの分岐 (推奨)
-`proxy-router.ts` で `model` 文字列を検査し、`TransformService` か `OpenAIPassthroughService` (新規) のどちらを呼ぶか決定する。Auth Passthrough は `OpenAIPassthroughService` 内部、または呼び出し前のロジックで制御可能だが、Service 内部に隠蔽するのが望ましい。
-
-- **メリット**: 責務が明確。Antigravity 関連のロジックに影響を与えない。
-- **デメリット**: `proxy-router.ts` のロジックが少し増える。
-- **判定**: **採用**。
-
-## 5. 推奨設計 (Design Recommendations)
-
-### アーキテクチャ
-1. **`OpenAIPassthroughService` の新設**:
-   - `src/proxy/openai-passthrough-service.ts`
-   - 依存: `OpenAIConfigService`, `fetch`
-   - 責務:
-     - `configService.getBaseUrl()` を使用してリクエスト先を決定。
-     - `configService.getApiKey()` がある場合は `Authorization` を上書き、なければ元のヘッダーを使用。
-     - ストリーミングを含むレスポンスの透過中継。
-
-2. **`OpenAIConfigService` の新設**:
-   - `src/config/openai-config-service.ts`
-   - `OPENAI_API_KEY`, `OPENAI_BASE_URL` の読み込み。
-
-3. **`ProxyRouter` の改修**:
-   - `createProxyApp` オプションに `openaiService` を追加。
-   - `POST /v1/chat/completions` ハンドラー内で `shouldRouteToOpenAI` (Utility) を使用して分岐。
-
-### 労力とリスク
-- **Effort**: **S (1-3 days)** - Auth Passthrough や Base URL 対応が増えたが、基本ロジックは単純。
-- **Risk**: **Low** - 既存機能への影響は限定的。
-
-## 6. 次のステップ
-
-1. `/kiro-spec-design openai-passthrough` を実行し、詳細設計を生成する（既に生成・更新済み）。
+## 6. Recommendations for Design Phase
+- **推奨アプローチ**: Option B（新規 `OpenAIPassthroughService`）を主軸に設計。
+- **追加調査が必要な事項**:
+  - `ChatCompletionRequestSchema` の適用範囲を Antigravity 経路と OpenAI 経路で分離する設計（パススルー時は厳格検証を回避するか最小検証に留める）。
+  - 上流レスポンスの **ステータス/ヘッダー/ボディをそのまま**返すための `Response` 透過ロジックと、ストリーミング時のハンドリング。
+  - `OPENAI_API_KEY` 未設定時の Auth Passthrough と、`OPENAI_BASE_URL` のデフォルト値処理の責務分解。
+  - `model` 欠落時の OpenAI 互換エラーを明示的に生成する分岐の位置（ルーターかサービスか）。

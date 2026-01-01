@@ -1,7 +1,8 @@
 # 要件定義書
 
 ## イントロダクション
-OpenAI Passthrough ルーターは、OpenAI 互換クライアントからのリクエストを `model` 名に基づいて Antigravity または OpenAI に自動で振り分ける機能を提供する。これにより、クライアントは単一のエンドポイント設定で複数のモデルをシームレスに利用できる。
+Codex Antigravity Adapter を拡張し、Antigravity API 対応モデル以外のリクエストを環境変数で指定された OpenAI 互換エンドポイントへ透過的に転送（パススルー）する統合ルーター機能を実装する。
+これにより、クライアントは単一のエンドポイント設定で複数のモデルをシームレスに利用できる。
 
 ## 要件
 
@@ -122,6 +123,7 @@ OpenAI Passthrough ルーターは、OpenAI 互換クライアントからのリ
    }
    ```
 
+
 ### Requirement 5: 透過性とクライアント設定の簡素化
 **Objective:** 利用者として、単一の `base_url` 設定で複数プロバイダーのモデルを利用したい。
 
@@ -129,3 +131,42 @@ OpenAI Passthrough ルーターは、OpenAI 互換クライアントからのリ
 1. The OpenAI Passthrough ルーター shall OpenAI 互換の `/v1/chat/completions` エンドポイントを維持する。
 2. When クライアントが同一のエンドポイントに対して異なる `model` 名を指定してリクエストする, the OpenAI Passthrough ルーター shall モデル名に応じて自動的に経路を選択する。
 3. The OpenAI Passthrough ルーター shall モデルごとの追加設定や別エンドポイントの指定をクライアント側に要求しない。
+
+## 技術的制約 (Technical Constraints)
+
+* The system **must** be built using **TypeScript** and **Hono** framework on **Bun** runtime.
+* The system **must** maintain existing Antigravity proxy functionality without regression.
+* All execution **must** occur within the **Devcontainer** environment.
+* Host-side execution is strictly **prohibited**.
+
+## 環境構築 (Environment Setup)
+
+以下の設定を持つ `.devcontainer/devcontainer.json` を使用する：
+
+```json
+{
+  "name": "Codex Adapter Dev",
+  "image": "oven/bun:1-debian",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "biomejs.biome",
+        "esbenp.prettier-vscode"
+      ]
+    }
+  },
+  "remoteUser": "bun",
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {}
+  }
+}
+```
+
+## テスト戦略 (Testing Strategy)
+
+* テストは **bun:test** を使用して実行する。
+* **統合テスト**: Upstream OpenAI API をシミュレートするためのモックサーバーのセットアップが必要。
+* テストスイート内で `Bun.serve` を使用してモックサーバーを作成する。
+* ヘッダー（`Authorization`）とボディが正しくモックサーバーに転送されることを確認する。
+* モックサーバーからのレスポンスが正しくライアントに返されることを確認する。
+* 実行コマンド: `bun test`（コンテナ内で実行すること）。

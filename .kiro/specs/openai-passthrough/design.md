@@ -81,10 +81,72 @@ graph TB
 | Layer | Choice / Version | Role in Feature | Notes |
 |-------|------------------|-----------------|-------|
 | Backend / Services | Hono ^4.0 | HTTP ルーティング・リクエスト処理 | 既存スタック |
-| Backend / Services | Zod ^3.22 | リクエストバリデーション | 既存スキーマ再利用 |
+| Backend / Services | Zod ^3.22 | リクエストバリデーション | **経路別スキーマ使用** |
 | Infrastructure / Runtime | Bun >=1.2.19 | HTTP クライアント (fetch)、サーバー | 既存スタック |
 
 > 新規依存の追加なし。既存の `fetch` API を使用して OpenAI API と通信する。
+
+### Validation Strategy by Route
+
+**Critical Design Decision**: OpenAI パススルーの透過性（Req 3.1）を保証するため、経路ごとに異なるバリデーション戦略を採用する。
+
+| Route | Schema | Behavior | Rationale |
+|-------|--------|----------|----------|
+| Antigravity | `ChatCompletionRequestSchema` (strict) | 厳格なバリデーション、content 配列を文字列に変換 | Antigravity API の仕様に適合させるため |
+| OpenAI Passthrough | `OpenAIPassthroughRequestSchema` (passthrough) | 最低限の `model` 検証のみ、その他は透過 | OpenAI API の互換性を維持し、未知フィールドを保持 |
+
+**OpenAI Passthrough 用スキーマ**:
+
+```typescript
+// src/transformer/openai-passthrough-schema.ts
+import { z } from "zod";
+
+/**
+ * OpenAI パススルー用の最小限バリデーションスキーマ
+ * - model フィールドの存在のみを検証
+ * - その他のフィールドは透過（passthrough）
+ * - content 配列の変換は行わない
+ */
+export const OpenAIPassthroughRequestSchema = z
+  .object({
+    model: z.string().min(1),
+    // その他のフィールドは passthrough で透過
+  })
+  .passthrough();
+
+export type OpenAIPassthroughRequest = z.infer<typeof OpenAIPassthroughRequestSchema>;
+```
+
+**Router での分岐バリデーション**:
+
+```typescript
+// proxy-router.ts 内の処理フロー
+// 1. JSON パース
+const payload = await c.req.json();
+
+// 2. model フィールドの早期検証（Req 2.3）
+if (!payload.model || payload.model === "") {
+  return c.json(createOpenAIError(
+    "Missing required parameter: 'model'",
+    "invalid_request_error",
+    null,
+    "model"
+  ), 400);
+}
+
+// 3. ルート判定
+if (shouldRouteToOpenAI(payload.model)) {
+  // OpenAI パス: 最小限のバリデーション（passthrough スキーマ）
+  const parsed = OpenAIPassthroughRequestSchema.safeParse(payload);
+  if (!parsed.success) { /* error handling */ }
+  // 元の payload（未変換）を openaiService に渡す
+  return options.openaiService.handleCompletion(c.req.raw, payload);
+} else {
+  // Antigravity パス: 厳格なバリデーション（既存スキーマ）
+  const parsed = ChatCompletionRequestSchema.safeParse(payload);
+  // ... 既存の Antigravity フロー
+}
+```
 
 ## System Flows
 
@@ -142,19 +204,23 @@ sequenceDiagram
 flowchart TD
     A[Request Received] --> B{OPENAI_API_KEY set?}
     B -->|No - Auth Passthrough Mode| D[Forward with Client Authorization Header]
-    B -->|Yes - Use Service Key| D[Forward to OpenAI]
-    D --> E{Network Error?}
-    E -->|Yes| F[504 router_network_timeout]
-    E -->|No| G{OpenAI Response?}
-    G -->|Error Response including 401| H[Passthrough Error Verbatim]
-    G -->|Success| I{Streaming?}
-    I -->|No| J[Passthrough Response]
-    I -->|Yes| K[Start Stream Relay]
-    K --> L{Stream Error?}
-    L -->|Before Start| M[504 router_network_timeout]
-    L -->|After Start| N[Transparent Relay - Client Receives Partial Stream]
-    G -->|Invalid Body| O[Received Status router_upstream_response_invalid]
+    B -->|Yes - Use Service Key| D2[Forward with Service Key]
+    D --> E{fetch() succeeds?}
+    D2 --> E
+    E -->|No - Network Error/Timeout| F[504 router_network_timeout]
+    E -->|No - Unexpected Exception| F2[500 router_internal_error]
+    E -->|Yes - HTTP Response Received| G[Passthrough Response Verbatim]
+    G --> H{Streaming?}
+    H -->|No| I[Return JSON Response as-is]
+    H -->|Yes| J[Start Stream Relay]
+    J --> K{Stream Error After Start?}
+    K -->|Connection Lost| L[Client Receives Partial Stream - No Router Intervention]
+    K -->|No Error| M[Complete Stream Relay]
 ```
+
+> **重要**: 上流から HTTP レスポンス（ステータス + ボディ）が返却された場合は、ステータスコードやボディの内容にかかわらず、そのまま透過的にクライアントに返却する。ルーターが独自のエラーを生成するのは、`fetch()` が例外をスローした場合（ネットワークエラー、タイムアウト）のみ。
+
+
 
 #### ストリーミングエラーハンドリングの詳細
 
@@ -221,7 +287,7 @@ flowchart TD
 interface OpenAIPassthroughService {
   handleCompletion(
     originalRequest: Request,
-    body: ChatCompletionRequest
+    body: Record<string, unknown>  // OpenAI パススルーでは未変換の生のペイロードを受け取る
   ): Promise<Response>;
 }
 
@@ -247,9 +313,11 @@ function createOpenAIPassthroughService(
 ##### Implementation Notes
 
 - **Preconditions (Router Context)**:
-  - `proxy-router` により、リクエストは既に `ChatCompletionRequestSchema` でバリデーション済みであることが保証されている。
-  - したがって、`body` は常に有効な JSON オブジェクトであり、`model` フィールドは必ず存在する。
+  - OpenAI パスの場合、`proxy-router` により、リクエストは `OpenAIPassthroughRequestSchema`（`.passthrough()` 使用）で最小限のバリデーション済み。
+  - このスキーマは `model` フィールドの存在のみを検証し、その他のフィールドは透過する（`content` 配列の変換なし）。
+  - したがって、`body` は元の JSON ペイロードをそのまま保持した `Record<string, unknown>` であり、`model` フィールドは必ず存在する。
   - `Content-Type` が `application/json` 以外、または不正な JSON の場合は Router レベルで 400 エラーとなり、このサービスには到達しない。
+  - **注意**: Antigravity パスでは別のスキーマ（`ChatCompletionRequestSchema`）が使用されるが、このサービスは OpenAI パス専用であり、影響を受けない。
 
 - **Integration**:
   - `fetch` API を使用して上位サーバーと通信
@@ -268,8 +336,9 @@ function createOpenAIPassthroughService(
       - その他のヘッダー: 元リクエストからコピー
       - `Authorization`: 上記ロジックに従って設定
     - **Body**:
-      - Router でパース済みの `body` を `JSON.stringify(body)` で再シリアライズして送信。
-      - これにより、不正な JSON のサニタイズと、Transfer-Encoding: chunked の適切な処理を保証する。
+      - Router でパース済みの生の `body`（`Record<string, unknown>`）を `JSON.stringify(body)` で再シリアライズして送信。
+      - **重要**: `OpenAIPassthroughRequestSchema` は `.passthrough()` を使用しているため、未知のフィールドは保持される。
+      - これにより、OpenAI API の新しいパラメータや拡張フィールドも透過的に転送される。
     - **Response**:
       - `fetch` の戻り値 `Response` オブジェクトを、新しい `Response` オブジェクトとしてラップして返却する。
       - Status, StatusText, Headers, Body (Stream) をすべてコピーする。
@@ -281,6 +350,7 @@ function createOpenAIPassthroughService(
     - タイムアウト検出: `fetch` の `signal` オプションに `AbortSignal.timeout()` を使用し、ストリーム開始前のタイムアウトのみ検出（開始後のタイムアウトは検出しない）
 - **Validation**:
   - `model` フィールドの存在チェックは Router 側で実施済み
+  - OpenAI パスでは最小限のバリデーションのみ（透過性優先）
 - **Risks**:
   - 上位サーバーのレート制限 — `Retry-After` ヘッダーを透過
   - ストリーム中断の検出不可 — 透過中継のため、ルーターレベルでの検出・ロギングは困難
@@ -625,7 +695,42 @@ OpenAI パススルーのエラー処理は以下の方針に従う:
 | model フィールド欠損 (Req 2.3) | 400 | `null` | Missing required parameter: 'model' | N/A (occurs before stream) |
 | ネットワークタイムアウト (Req 4.2) | 504 | `router_network_timeout` | Failed to connect to upstream API: network timeout | Only detectable before stream starts |
 | 内部エラー (Req 4.3) | 500 | `router_internal_error` | Internal router error occurred while processing upstream request | Only detectable before stream starts |
-| 上流レスポンス不正 (Req 4.4) | (受信ステータス) | `router_upstream_response_invalid` | Upstream server returned an invalid or unparseable response | Only for non-streaming responses |
+
+#### Req 4.4: 上流レスポンス不正の処理（透過性との両立）
+
+**設計判断**: OpenAI パススルーの透過性を優先し、Req 4.4 の適用範囲を限定する。
+
+| シナリオ | 処理 | 理由 |
+|---------|------|------|
+| 上流が HTTP レスポンスを返却（ステータス + ボディ） | **そのまま透過** | 透過性優先。エラーかどうかの判断はクライアントに委譲 |
+| ネットワークエラー（接続不可、タイムアウト） | 504 `router_network_timeout` | 上流から応答がないため、ルーターが生成 |
+| `fetch` が例外をスロー（予期しないエラー） | 500 `router_internal_error` | ルーター内部エラーとして処理 |
+
+**Req 4.4 の再解釈**:
+- 「上流からの不完全な応答」は、**上流が HTTP レスポンスを返却しない場合**（ネットワークエラー、接続タイムアウト）にのみ適用
+- 上流が HTTP ステータスとボディを返却した場合は、ボディの内容にかかわらず透過的に返却
+- これにより、OpenAI API の新しいレスポンス形式にも対応可能
+
+```typescript
+// OpenAIPassthroughService 内のエラーハンドリング
+async function handleCompletion(originalRequest: Request, body: Record<string, unknown>): Promise<Response> {
+  try {
+    const response = await fetch(upstreamUrl, { ... });
+    // 上流からのレスポンスはステータスにかかわらず透過的に返却
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch (error) {
+    // fetch が例外をスローした場合のみルーターがエラーを生成
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      return createErrorResponse(504, 'router_network_timeout', ...);
+    }
+    return createErrorResponse(500, 'router_internal_error', ...);
+  }
+}
+```
 
 #### Upstream Errors (Passthrough)
 
