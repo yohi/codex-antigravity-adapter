@@ -115,16 +115,18 @@ sequenceDiagram
         TS-->>R: Result
     else other models (gpt, etc.)
         SL-->>R: true
-        alt openaiService is available
-            R->>OS: handleCompletion(rawRequest, routedRequest)
-            OS->>OA: Passthrough Request
+        R->>OS: handleCompletion(rawRequest, routedRequest)
+        Note over OS: Auth Mode determined by OPENAI_API_KEY<br/>- Set: Use service key<br/>- Unset: Auth Passthrough (use client Authorization header)
+        OS->>OA: Passthrough Request (with appropriate auth)
+        alt Upstream OpenAI returns error (e.g., 401, 400, 500)
+            OA-->>OS: Error Response
+            OS-->>R: Passthrough Error Verbatim
+        else Success
             OA-->>OS: Response/Stream
             OS-->>R: Response
-        else openaiService missing/no key
-            R-->>Client: 401 router_api_key_missing (Req 1.2)
         end
     end
-    
+
     R-->>Client: Response
 ```
 
@@ -139,12 +141,12 @@ sequenceDiagram
 ```mermaid
 flowchart TD
     A[Request Received] --> B{OPENAI_API_KEY set?}
-    B -->|No| C[401 router_api_key_missing]
-    B -->|Yes| D[Forward to OpenAI]
+    B -->|No - Auth Passthrough Mode| D[Forward with Client Authorization Header]
+    B -->|Yes - Use Service Key| D[Forward to OpenAI]
     D --> E{Network Error?}
     E -->|Yes| F[504 router_network_timeout]
     E -->|No| G{OpenAI Response?}
-    G -->|Error Response| H[Passthrough Error Verbatim]
+    G -->|Error Response including 401| H[Passthrough Error Verbatim]
     G -->|Success| I{Streaming?}
     I -->|No| J[Passthrough Response]
     I -->|Yes| K[Start Stream Relay]
@@ -556,7 +558,8 @@ function shouldRouteToOpenAI(model: string): boolean {
 
 - **Integration**:
   - 既存の `ModelRoutingService` によるエイリアス解決後にルーティング判定
-  - `openaiService` が未導入の場合、OpenAI 対象モデルに対するリクエストは適切なエラーハンドリングが必要
+  - `openaiService` は常に作成される（`createAppContext()` 参照）
+  - `OPENAI_API_KEY` が未設定の場合、Auth Passthrough モードで動作し、クライアントの Authorization ヘッダーを上流に転送する
 - **Validation**: 
   - **Requirement 2.3: strict model validation**:
     スキーマパースの直前または直後に以下の明示的なチェックを追加し、要件通りのエラーメッセージと `param` フィールドを保証する。
