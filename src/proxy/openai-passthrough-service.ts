@@ -26,6 +26,7 @@ export function createOpenAIPassthroughService(
     async handleCompletion(originalRequest, body) {
       const baseUrl = options.configService.getBaseUrl();
       const url = new URL(CHAT_COMPLETIONS_PATH, baseUrl).toString();
+      const isStream = body.stream === true;
       const headers = new Headers(originalRequest.headers);
       const apiKey = options.configService.getApiKey();
       headers.delete("Host");
@@ -39,15 +40,111 @@ export function createOpenAIPassthroughService(
       }, timeoutMs);
 
       try {
-        return await fetcher(url, {
+        const response = await fetcher(url, {
           method: "POST",
           headers,
           body: JSON.stringify(body),
           signal: controller.signal,
         });
+        if (isStream && !response.body) {
+          return createOpenAIErrorResponse(
+            502,
+            "Invalid response format from upstream service",
+            "api_error",
+            "invalid_response"
+          );
+        }
+        if (!isStream && isJsonResponse(response)) {
+          try {
+            await response.clone().json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return createOpenAIErrorResponse(
+                502,
+                "Invalid response format from upstream service",
+                "api_error",
+                "invalid_response"
+              );
+            }
+            throw error;
+          }
+        }
+        return response;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return createOpenAIErrorResponse(
+            502,
+            "Invalid response format from upstream service",
+            "api_error",
+            "invalid_response"
+          );
+        }
+        if (isUpstreamConnectionError(error)) {
+          return createOpenAIErrorResponse(
+            502,
+            "Unable to connect to upstream service",
+            "api_error",
+            "bad_gateway"
+          );
+        }
+        return createOpenAIErrorResponse(
+          500,
+          "Internal router error occurred while processing upstream request",
+          "api_error",
+          "router_internal_error"
+        );
       } finally {
         clearTimeout(timeoutId);
       }
     },
   };
+}
+
+type OpenAIErrorResponse = {
+  error: {
+    message: string;
+    type: string;
+    param: string | null;
+    code: string | null;
+  };
+};
+
+function createOpenAIErrorResponse(
+  status: number,
+  message: string,
+  type: string,
+  code: string | null
+): Response {
+  const payload: OpenAIErrorResponse = {
+    error: {
+      message,
+      type,
+      param: null,
+      code,
+    },
+  };
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function isJsonResponse(response: Response): boolean {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  return contentType.toLowerCase().includes("application/json");
+}
+
+function isUpstreamConnectionError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return true;
+    }
+    return /timed out/i.test(error.message);
+  }
+  return false;
 }
