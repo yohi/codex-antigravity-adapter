@@ -55,7 +55,18 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     }
 
     const payloadRecord = isRecord(payload) ? payload : null;
-    const modelValue = payloadRecord?.model;
+    if (!payloadRecord) {
+      return c.json(
+        createOpenAIErrorPayload(
+          "Request body must be a JSON object.",
+          "invalid_request_error",
+          "invalid_request"
+        ),
+        400
+      );
+    }
+
+    const modelValue = payloadRecord.model;
     if (modelValue === undefined || modelValue === null || modelValue === "") {
       return c.json(
         createOpenAIErrorPayload(
@@ -69,25 +80,12 @@ export function createProxyApp(options: CreateProxyAppOptions): Hono {
     }
     if (typeof modelValue !== "string") {
       return c.json(
-        {
-          error: {
-            type: "invalid_request_error",
-            code: "invalid_request",
-            message: "Invalid 'model' parameter.",
-          },
-        },
-        400
-      );
-    }
-    if (!payloadRecord) {
-      return c.json(
-        {
-          error: {
-            type: "invalid_request_error",
-            code: "invalid_request",
-            message: "Request body must be a JSON object.",
-          },
-        },
+        createOpenAIErrorPayload(
+          "Invalid 'model' parameter.",
+          "invalid_request_error",
+          "invalid_request",
+          "model"
+        ),
         400
       );
     }
