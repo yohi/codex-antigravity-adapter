@@ -24,3 +24,6 @@ credentials.json
 # Local configuration files
 config.local.*
 *.config.local.*
+
+model-aliases.json
+

@@ -9,9 +9,11 @@ import type {
 import type { Logger } from "../src/logging";
 import { NOOP_LOGGER } from "../src/logging";
 import type { ModelSettingsService } from "../src/config/model-settings-service";
+import type { OpenAIConfigService } from "../src/config/openai-config-service";
 import type { AppContext, CreateAppContextOptions } from "../src/main";
 import { STARTUP_BANNER, createAppContext, startApplication, startServers } from "../src/main";
 import { createProxyApp, type CreateProxyAppOptions } from "../src/proxy/proxy-router";
+import type { OpenAIPassthroughService } from "../src/proxy/openai-passthrough-service";
 import type { TransformService } from "../src/proxy/transform-service";
 import type { ChatCompletionRequest } from "../src/transformer/schema";
 
@@ -46,6 +48,21 @@ function createTransformServiceStub(
       onRequest?.(request);
       return { ok: true, value: response };
     },
+  };
+}
+
+function createOpenAIConfigStub(overrides: Partial<OpenAIConfigService> = {}): OpenAIConfigService {
+  return {
+    getApiKey: () => undefined,
+    getBaseUrl: () => "https://api.openai.com",
+    isConfigured: () => false,
+    ...overrides,
+  };
+}
+
+function createOpenAIServiceStub(): OpenAIPassthroughService {
+  return {
+    handleCompletion: async () => new Response(JSON.stringify({ id: "openai-stub" })),
   };
 }
 
@@ -107,6 +124,83 @@ describe("main", () => {
     signalHandlers.SIGINT();
     expect(authStopCalls).toBe(1);
     expect(proxyStopCalls).toBe(1);
+  });
+});
+
+describe("createAppContext openai initialization", () => {
+  it("creates OpenAI services and passes them to createProxyApp", () => {
+    let capturedProxyOptions: CreateProxyAppOptions | undefined;
+
+    const context = createAppContext({
+      logger: NOOP_LOGGER,
+      createProxyApp: (options) => {
+        capturedProxyOptions = options;
+        return new Hono();
+      },
+    });
+
+    expect(context.openaiConfigService).toBeDefined();
+    expect(context.openaiService).toBeDefined();
+    expect(capturedProxyOptions?.openaiService).toBe(context.openaiService);
+  });
+
+  it("logs mode and base URL when initializing OpenAI services", () => {
+    const originalApiKey = process.env.OPENAI_API_KEY;
+    const originalBaseUrl = process.env.OPENAI_BASE_URL;
+    try {
+      process.env.OPENAI_API_KEY = "test-key";
+      process.env.OPENAI_BASE_URL = "https://example.test";
+
+      const { entries, logger } = createLogCollector();
+      createAppContext({ logger });
+
+      const infoMessages = entries
+        .filter((entry) => entry.level === "info")
+        .map((entry) => entry.message);
+      const debugMessages = entries
+        .filter((entry) => entry.level === "debug")
+        .map((entry) => entry.message);
+
+      expect(infoMessages).toContain(
+        "OpenAI passthrough service initialized with server API key"
+      );
+      expect(debugMessages).toContain("OpenAI base URL: https://example.test");
+    } finally {
+      if (originalApiKey !== undefined) {
+        process.env.OPENAI_API_KEY = originalApiKey;
+      } else {
+        delete process.env.OPENAI_API_KEY;
+      }
+      if (originalBaseUrl !== undefined) {
+        process.env.OPENAI_BASE_URL = originalBaseUrl;
+      } else {
+        delete process.env.OPENAI_BASE_URL;
+      }
+    }
+  });
+
+  it("logs auth passthrough mode when API key is missing", () => {
+    const originalApiKey = process.env.OPENAI_API_KEY;
+    try {
+      delete process.env.OPENAI_API_KEY;
+
+      const { entries, logger } = createLogCollector();
+      createAppContext({ logger });
+
+      const infoMessages = entries
+        .filter((entry) => entry.level === "info")
+        .map((entry) => entry.message);
+
+      expect(infoMessages).toContain(
+        "OpenAI passthrough service initialized in Auth Passthrough mode (client Authorization header will be used)"
+      );
+    } finally {
+      if (originalApiKey !== undefined) {
+        process.env.OPENAI_API_KEY = originalApiKey;
+      } else {
+        delete process.env.OPENAI_API_KEY;
+      }
+    }
   });
 });
 
@@ -278,6 +372,8 @@ describe("startApplication model aliases", () => {
         return {
           authApp: new Hono(),
           proxyApp: new Hono(),
+          openaiConfigService: createOpenAIConfigStub(),
+          openaiService: createOpenAIServiceStub(),
         } as AppContext;
       },
       startAuthServer: () => ({ stop: () => {} }),
@@ -307,6 +403,8 @@ describe("startApplication model aliases", () => {
         return {
           authApp: new Hono(),
           proxyApp: new Hono(),
+          openaiConfigService: createOpenAIConfigStub(),
+          openaiService: createOpenAIServiceStub(),
         } as AppContext;
       },
       startAuthServer: () => ({ stop: () => {} }),

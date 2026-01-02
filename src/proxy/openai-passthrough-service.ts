@@ -1,0 +1,150 @@
+import type { OpenAIConfigService } from "../config/openai-config-service";
+
+export type OpenAIPassthroughService = {
+  handleCompletion: (
+    originalRequest: Request,
+    body: Record<string, unknown>
+  ) => Promise<Response>;
+};
+
+export type CreateOpenAIPassthroughServiceOptions = {
+  configService: OpenAIConfigService;
+  fetch?: typeof fetch;
+  timeout?: number;
+};
+
+const DEFAULT_TIMEOUT_MS = 60_000;
+const CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
+
+export function createOpenAIPassthroughService(
+  options: CreateOpenAIPassthroughServiceOptions
+): OpenAIPassthroughService {
+  const fetcher = options.fetch ?? globalThis.fetch.bind(globalThis);
+  const timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
+
+  return {
+    async handleCompletion(originalRequest, body) {
+      const baseUrl = options.configService.getBaseUrl();
+      const url = new URL(CHAT_COMPLETIONS_PATH, baseUrl).toString();
+      const isStream = body.stream === true;
+      const headers = new Headers(originalRequest.headers);
+      const apiKey = options.configService.getApiKey();
+      headers.delete("Host");
+      headers.delete("Content-Length");
+      if (apiKey) {
+        headers.set("Authorization", `Bearer ${apiKey}`);
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort(new Error("Upstream request timed out"));
+      }, timeoutMs);
+
+      try {
+        const response = await fetcher(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        if (isStream && !response.body) {
+          return createOpenAIErrorResponse(
+            502,
+            "Invalid response format from upstream service",
+            "api_error",
+            "invalid_response"
+          );
+        }
+        if (!isStream && isJsonResponse(response)) {
+          try {
+            await response.clone().json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return createOpenAIErrorResponse(
+                502,
+                "Invalid response format from upstream service",
+                "api_error",
+                "invalid_response"
+              );
+            }
+            throw error;
+          }
+        }
+        return response;
+      } catch (error) {
+        if (error instanceof SyntaxError) {
+          return createOpenAIErrorResponse(
+            502,
+            "Invalid response format from upstream service",
+            "api_error",
+            "invalid_response"
+          );
+        }
+        if (isUpstreamConnectionError(error)) {
+          return createOpenAIErrorResponse(
+            502,
+            "Unable to connect to upstream service",
+            "api_error",
+            "bad_gateway"
+          );
+        }
+        return createOpenAIErrorResponse(
+          500,
+          "Internal router error occurred while processing upstream request",
+          "api_error",
+          "router_internal_error"
+        );
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+  };
+}
+
+type OpenAIErrorResponse = {
+  error: {
+    message: string;
+    type: string;
+    param: string | null;
+    code: string | null;
+  };
+};
+
+function createOpenAIErrorResponse(
+  status: number,
+  message: string,
+  type: string,
+  code: string | null
+): Response {
+  const payload: OpenAIErrorResponse = {
+    error: {
+      message,
+      type,
+      param: null,
+      code,
+    },
+  };
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}
+
+function isJsonResponse(response: Response): boolean {
+  const contentType = response.headers.get("Content-Type") ?? "";
+  return contentType.toLowerCase().includes("application/json");
+}
+
+function isUpstreamConnectionError(error: unknown): boolean {
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error) {
+    if (error.name === "AbortError") {
+      return true;
+    }
+    return /timed out/i.test(error.message);
+  }
+  return false;
+}

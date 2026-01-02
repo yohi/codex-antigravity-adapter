@@ -14,12 +14,20 @@ import {
   type ModelCatalog,
   type ModelSettingsService,
 } from "./config/model-settings-service";
+import {
+  createOpenAIConfigService,
+  type OpenAIConfigService,
+} from "./config/openai-config-service";
 import { createLogger, isDebugEnabled, NOOP_LOGGER, type Logger, wrapFetchWithLogging } from "./logging";
 import { createAntigravityRequester } from "./proxy/antigravity-client";
 import {
   createModelRoutingService,
   type ModelRoutingService,
 } from "./proxy/model-routing-service";
+import {
+  createOpenAIPassthroughService,
+  type OpenAIPassthroughService,
+} from "./proxy/openai-passthrough-service";
 import { createProxyApp, startProxyServer, type ProxyServerOptions } from "./proxy/proxy-router";
 import { createTransformService, type TransformService } from "./proxy/transform-service";
 import { DEFAULT_SIGNATURE_CACHE, SESSION_ID } from "./transformer/helpers";
@@ -53,6 +61,8 @@ export type AppContext = {
   tokenStore: FileTokenStore;
   authService: OAuthAuthService;
   transformService: TransformService;
+  openaiConfigService: OpenAIConfigService;
+  openaiService: OpenAIPassthroughService;
   modelAliasConfigService?: ModelAliasConfigService;
   modelRoutingService?: ModelRoutingService;
 };
@@ -77,10 +87,21 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
   const modelRoutingService = modelAliasConfigService
     ? createModelRoutingService({ aliasConfig: modelAliasConfigService, logger })
     : undefined;
+  const openaiConfigService = createOpenAIConfigService();
+  const openaiService = createOpenAIPassthroughService({ configService: openaiConfigService });
+  if (openaiConfigService.isConfigured()) {
+    logger.info("OpenAI passthrough service initialized with server API key");
+  } else {
+    logger.info(
+      "OpenAI passthrough service initialized in Auth Passthrough mode (client Authorization header will be used)"
+    );
+  }
+  logger.debug(`OpenAI base URL: ${openaiConfigService.getBaseUrl()}`);
   const proxyApp = buildProxyApp({
     transformService,
     modelCatalog,
     modelRoutingService,
+    openaiService,
   });
 
   return {
@@ -89,6 +110,8 @@ export function createAppContext(options: CreateAppContextOptions = {}): AppCont
     tokenStore,
     authService,
     transformService,
+    openaiConfigService,
+    openaiService,
     modelAliasConfigService,
     modelRoutingService,
   };
