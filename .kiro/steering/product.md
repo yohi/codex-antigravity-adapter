@@ -18,6 +18,13 @@ A local proxy adapter allowing [Codex CLI](https://github.com/tool-codex/codex-c
 - **Compatibility:**
   - Supports Claude (with thinking block removal for signature validity) and Gemini models.
   - Mitigates "Invalid signature" errors by sanitizing requests.
+- **OpenAI Passthrough:**
+  - Proxies requests directly to OpenAI (or compatible upstreams) when configured.
+  - Supports configurable Base URL and Auth passthrough.
+  - Handles timeout management (default 60s) and error normalization.
+- **Dynamic Model Routing:**
+  - Request-time model selection via alias tags (e.g. `@fast`) in prompts.
+  - Sanitizes prompts by removing aliases before forwarding.
 
 ## User Experience
 1. User configures Codex CLI to point to `http://localhost:3000/v1`.

@@ -19,6 +19,9 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 - **動的モデルルーティング**:
   - プロンプト内のエイリアスタグ（例: `@fast`）によるモデルの動的切替。
   - プロンプトのサニタイズ（エイリアス除去）によるクリーンな入力の維持。
+- **OpenAI Passthrough**:
+  - Gemini/Claude 以外のモデル（例: `gpt-4o`, `o1`）へのリクエストを、指定されたアップストリーム（OpenAI API や互換サーバー）へ自動転送します。
+  - 認証情報のパススルーや Base URL のカスタマイズをサポート。
 
 ## 必要要件
 
@@ -46,6 +49,10 @@ Google の内部 API である Antigravity (Cloud Code Assist) API と通信す�
 
    **推奨設定:**
    - `ANTIGRAVITY_STATE_SECRET`: OAuth 状態署名用のシークレット（ランダムな文字列を設定してください）
+
+   **OpenAI Passthrough 設定 (任意):**
+   - `OPENAI_API_KEY`: アップストリームへ送信する API キー（未設定時はクライアントのヘッダーをパススルー）
+   - `OPENAI_BASE_URL`: アップストリームの Base URL (デフォルト: `https://api.openai.com`)
 
 3. **Codex CLI の設定**
    Codex CLI (または IDE 拡張) からこのアダプターを利用するには、設定ファイル `~/.codex/config.toml` を編集してカスタムモデルプロバイダーとして登録します。
@@ -185,6 +192,22 @@ codex "@think 複雑なアーキテクチャ設計を行って"
 - キーは `@` で始まる必要があります。
 - 値は有効なモデル ID である必要があります。
 - ファイルの変更を反映するには、サーバーの再起動が必要です。
+
+## OpenAI Passthrough
+
+Gemini (Google) や Claude (Anthropic on Vertex) 以外のモデル ID が指定された場合、リクエストを自動的に外部の OpenAI 互換 API へ転送します。
+
+### 動作ロジック
+
+- モデルIDに `gemini` または `claude` が含まれて**いない**場合 → **Passthrough** (OpenAI 側へ転送)
+- 含まれている場合 → **Antigravity** (Google 側へ処理)
+
+### 認証の挙動
+
+1. 環境変数 `OPENAI_API_KEY` がある場合: そのキーを使用します。
+2. 環境変数がない場合: クライアントが送信した `Authorization` ヘッダーをそのまま転送します。
+
+これにより、たとえば `api.openai.com` だけでなく、ローカルで動作する vLLM や Ollama (`http://localhost:8000/v1` 等) をアップストリームとして設定することも可能です。
 
 ## 実行方法
 

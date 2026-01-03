@@ -26,7 +26,10 @@ Features are grouped by domain (`auth`, `proxy`). Each module typically exposes:
 - **Service:** Business logic (`*-service.ts`).
 - **Store:** Data persistence (`*-store.ts`).
 
-Example: `ModelSettingsService` in `src/config` handles dynamic model loading.
+Example services:
+- `ModelSettingsService` in `src/config`: Dynamic model loading.
+- `OpenAIPassthroughService` in `src/proxy`: Upstream proxying.
+- `ModelRoutingService` in `src/proxy`: Alias resolution.
 
 ### Dependency Injection
 Components are assembled in `src/main.ts`. Functions like `createAppContext` and `startServers` handle wiring, enabling easier testing and modularity.
