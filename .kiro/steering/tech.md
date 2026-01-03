@@ -15,9 +15,10 @@
 - **Configuration:**
   - Port is configurable via `PORT` environment variable (default: 3000).
   - Model catalog can be extended via `ANTIGRAVITY_ADDITIONAL_MODELS` (CSV or JSON array) or `.codex/custom-models.json`.
+  - OpenAI Passthrough configured via `OPENAI_API_KEY` and `OPENAI_BASE_URL` (default: `https://api.openai.com`).
 
 ## Development Conventions
-- **Imports:** Use explicit relative paths with extensions (e.g., `./auth-router.ts` implied, or specific files if needed).
+- **Imports:** Use explicit relative paths (extensions optional).
 - **Formatting:** Prettier (or standard JS formatting).
 - **Linting:** Standard TypeScript strict mode.
 - **Async/Await:** Preferred over raw promises.
